@@ -1,0 +1,8 @@
+{
+  "vix_risk_off": 25,
+  "vix_risk_on": 18,
+  "fear_greed_risk_off": 40,
+  "fear_greed_risk_on": 60,
+  "cpi_inflation": 3.5,
+  "pmi_recession": 48
+}
