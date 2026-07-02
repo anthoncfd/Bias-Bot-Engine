@@ -4,9 +4,8 @@ python-dotenv==1.0.0
 yfinance==0.2.33
 pandas==2.2.0
 numpy==1.26.3
-httpx==0.26.0
-supabase==2.31.0,<3.0.0
-python-telegram-bot==20.6
+supabase>=2.3.0,<3.0.0
+python-telegram-bot>=20.6
 cachetools==5.3.2
 fredapi==0.5.1
 beautifulsoup4==4.12.3
