@@ -25,13 +25,16 @@ jobs:
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
         run: |
           python -c "
-from app.engines.prediction_evaluation import PredictionEvaluationEngine
-from app.engines.calibration import save_model
-assets = ['xauusd','btcusd','eurusd','gbpusd']
-for asset in assets:
-    try:
-        model, scaler, n, cv = PredictionEvaluationEngine.walk_forward_train(asset, '1d')
-        print(f'Calibration completed for asset {asset}. Data samples utilized: {n}')
-    except Exception as e:
-        print(f'Skipping asset nodes calibration matrix for {asset}: {e}')
-"
+          from app.engines.prediction_evaluation import PredictionEvaluationEngine
+          
+          assets = ['xauusd', 'btcusd', 'eurusd', 'gbpusd']
+          for asset in assets:
+              try:
+                  model, scaler, n, cv = PredictionEvaluationEngine.walk_forward_train(asset, '1d')
+                  if model is not None:
+                      print(f'Calibration completed for asset {asset}. Samples: {n}, CV: {cv:.3f}')
+                  else:
+                      print(f'Calibration skipped for asset {asset} (insufficient data).')
+              except Exception as e:
+                  print(f'Calibration failed for asset {asset}: {e}')
+          "
