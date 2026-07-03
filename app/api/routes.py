@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request, Response
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
+import pandas as pd  # Added to safely cast database/pandas timestamps to native python datetimes
 from prometheus_client import generate_latest, Counter, Histogram
 
 from app.config import TELEGRAM_TOKEN, ASSET_MAP
@@ -85,11 +86,15 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
+        # Normalized macro_ts processing to guarantee safe string rendering execution paths
+        raw_macro_ts = macro_ts.get('dxy')
+        clean_macro_ts = pd.to_datetime(raw_macro_ts).to_pydatetime() if raw_macro_ts else None
+
         explanation = ExplanationEngine.generate(
             asset, price_data.current_price, scores, prob_result["bullish_probability"], prob_result["confidence"],
             dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=news_items,
             source_reliabilities={"GoldAPI": 0.98, "Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
-            macro_timestamp=macro_ts.get('dxy'), news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
+            macro_timestamp=clean_macro_ts, news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
             model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0)
         )
         
