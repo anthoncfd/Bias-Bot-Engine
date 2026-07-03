@@ -9,13 +9,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- ENVIRONMENT VARIABLES ---
+# --- ENVIRONMENT CONFIGURATION ---
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-GOLDAPI_KEY = os.getenv("GOLDAPI_KEY")  # Fixed variable name mapping
+GOLDAPI_KEY = os.getenv("GOLDAPI_KEY")  # Matched environment naming configuration
 
 LOOKBACK_DAYS = 180
-MIN_REQUIRED_ROWS = 1  # Allows execution on initial DB creation
+MIN_REQUIRED_ROWS = 1  # Ensures initial database table seeds successfully calibrate
 
 FOREX_CRYPTO_ASSETS = {
     "btcusd": "BTC-USD",
@@ -25,7 +25,7 @@ FOREX_CRYPTO_ASSETS = {
 
 def get_supabase_client() -> Client:
     if not SUPABASE_URL or not SUPABASE_KEY:
-        raise ValueError("❌ System Environment Error: SUPABASE_URL or SUPABASE_KEY is missing!")
+        raise ValueError("❌ System Environment Error: SUPABASE_URL or SUPABASE_KEY variables missing!")
     return create_client(SUPABASE_URL, SUPABASE_KEY)
 
 def sync_spot_gold_and_get_history(supabase: Client) -> pd.DataFrame:
@@ -51,7 +51,7 @@ def sync_spot_gold_and_get_history(supabase: Client) -> pd.DataFrame:
             current_spot_price = float(data.get("price"))
             print(f"✅ Fetched Spot Gold: ${current_spot_price}")
             
-            # Persist price entry into Supabase history cache
+            # Persist price entry into Supabase history cache table
             supabase.table("gold_history").upsert({
                 "date": today_str,
                 "close_price": current_spot_price
@@ -87,12 +87,12 @@ def calculate_bias_metrics(df: pd.DataFrame) -> pd.DataFrame:
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = df.columns.get_level_values(0)
 
-    # Ensure data series contains numeric data points 
+    # Ensure data series contains numeric data points cleanly
     df['Close'] = pd.to_numeric(df['Close'], errors='coerce')
     df = df.dropna(subset=['Close'])
 
     if len(df) < 20:
-        # Fallback tracking if history data pool is still scaling up
+        # Fallback tracking if history data pool is still scaling up on run 1
         df['sma_20'] = df['Close']
         df['z_score'] = 0.0
     else:
@@ -145,7 +145,7 @@ def run_macro_engine():
     for asset_name, ticker in FOREX_CRYPTO_ASSETS.items():
         print(f"\n--- Processing Asset: {asset_name.upper()} ---")
         try:
-            # Pass custom session structure down directly to avoid Expecting Value 403 blocks
+            # Pass custom browser session context directly into the yfinance query pipeline
             raw_df = yf.download(ticker, start=start_date, end=end_date, session=session, progress=False)
             
             if raw_df.empty:
