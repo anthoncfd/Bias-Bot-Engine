@@ -49,14 +49,12 @@ asset_intelligence = AssetIntelligenceEngine()
 probability_engine = ProbabilityEngine()
 trade_quality = TradeQualityEngine()
 
-def safe_escape(text: str) -> str:
-    """Escapes special characters to prevent Telegram Markdown parsing syntax errors."""
+def clean_raw_text(text: str) -> str:
+    """Removes special characters from third-party strings that break traditional Telegram Markdown."""
     if not text:
         return ""
-    # Standard Markdown symbols that frequently break parsing layouts when nested
-    for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
-        text = text.replace(char, f"\\{char}")
-    return text
+    # Strip characters that conflict with basic Markdown tags inside headlines
+    return re.sub(r'[_*`\[\]()]', '', text)
 
 async def fetch_all_data(asset):
     macro_task = asyncio.create_task(asyncio.to_thread(macro_cb.call, macro_engine.fetch))
@@ -113,34 +111,33 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             clean_macro_ts = datetime.utcnow()
 
-        # Sanitize text contents from third-party arrays to protect Markdown integrity
-        escaped_news_items = []
+        # Sanitize text contents from third-party arrays to protect traditional Markdown integrity
+        cleaned_news_items = []
         for item in news_items:
             if hasattr(item, 'title'):
-                item.title = safe_escape(item.title)
-            escaped_news_items.append(item)
+                item.title = clean_raw_text(item.title)
+            cleaned_news_items.append(item)
 
         explanation = ExplanationEngine.generate(
             asset, price_data.current_price, scores, prob_result["bullish_probability"], prob_result["confidence"],
-            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=escaped_news_items,
+            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=cleaned_news_items,
             source_reliabilities={"GoldAPI": 0.98, "Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
             macro_timestamp=clean_macro_ts, news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
             model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0)
         )
         
-        # Build out clean string block avoiding unescaped markdown clashes
-        quality_pct = safe_escape(f"{trade_q*100:.0f}%")
-        explanation += f"\n\n📈 *Calculated Alpha Quality:* {quality_pct}"
+        # Build out clean string block using standard, resilient legacy Markdown parsing
+        explanation += f"\n\n📈 *Calculated Alpha Quality:* {trade_q*100:.0f}%"
         
         if trade_q > 0.68:
-            explanation += safe_escape(" ✅ High Conviction Execution Profile")
+            explanation += " ✅ High Conviction Execution Profile"
         elif trade_q > 0.48:
-            explanation += safe_escape(" ⚡ Neutral Conviction Strategy Holding")
+            explanation += " ⚡ Neutral Conviction Strategy Holding"
         else:
-            explanation += safe_escape(" ⏳ Low Conviction Signal Warning")
+            explanation += " ⏳ Low Conviction Signal Warning"
 
-        # Switched to MarkdownV2 to gracefully handle nested structural content strings safely
-        await update.message.reply_text(explanation, parse_mode="MarkdownV2")
+        # Reverted back to the standard resilient Markdown parser
+        await update.message.reply_text(explanation, parse_mode="Markdown")
 
         try:
             log_prediction(
@@ -155,11 +152,11 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning(f"Auditing tracking engine log skipped: {e}")
 
     except DataValidationError as e:
-        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {safe_escape(str(e))}", parse_mode="MarkdownV2")
+        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {str(e)}")
     except Exception as e:
         ERROR_COUNT.inc()
         logger.error(f"Execution Error processing requests on signature /{asset}: {e}", exc_info=True)
-        # Fallback raw text parsing response to avoid recursive layout rendering loops if debugging fails
+        # Safe fallback response using unformatted raw layout strings to completely prevent parsing crashes
         await update.message.reply_text(f"System processing error parsing {asset.upper()} asset matrix. Reason: {str(e)}")
         
     REQUEST_LATENCY.observe((datetime.utcnow() - start).total_seconds())
