@@ -89,9 +89,19 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
-        # Safely convert macro timestamp keys to true datetimes to avoid unhandled type errors in strftime
-        raw_macro_ts = macro_ts.get('dxy')
-        clean_macro_ts = pd.to_datetime(raw_macro_ts).to_pydatetime() if raw_macro_ts else None
+        # Highly defensive timestamp normalization to prevent type errors regardless of macro_ts structure
+        if hasattr(macro_ts, "get"):
+            raw_macro_ts = macro_ts.get('dxy') or macro_ts.get('fed')
+        else:
+            raw_macro_ts = macro_ts
+
+        if raw_macro_ts:
+            try:
+                clean_macro_ts = pd.to_datetime(raw_macro_ts).to_pydatetime()
+            except Exception:
+                clean_macro_ts = datetime.utcnow()
+        else:
+            clean_macro_ts = datetime.utcnow()
 
         explanation = ExplanationEngine.generate(
             asset, price_data.current_price, scores, prob_result["bullish_probability"], prob_result["confidence"],
