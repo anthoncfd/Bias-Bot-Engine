@@ -1,20 +1,20 @@
 import os
 from dotenv import load_dotenv
+
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+# Fixed to use your exact environment variable setup
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 FRED_API_KEY = os.getenv("FRED_API_KEY")
 
-# Gemini API Integration (Free Tier)
+# AI / Alternative Data Integrations
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-
-# GoldAPI.io key – required for XAUUSD and XAGUSD
 GOLDAPI_KEY = os.getenv("GOLDAPI_KEY")
 
-# Yahoo Finance symbols map
+# Supported Core Asset Universe Matrix
 ASSET_MAP = {
     "xauusd": "XAUUSD=X",
     "xagusd": "XAGUSD=X",
