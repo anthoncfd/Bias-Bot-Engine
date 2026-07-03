@@ -5,6 +5,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
 import pandas as pd
+import re
 from prometheus_client import generate_latest, Counter, Histogram
 
 from app.config import TELEGRAM_TOKEN, ASSET_MAP
@@ -27,7 +28,7 @@ from app.engines.calibration import MODEL_VERSION
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Fallback string ensures the router module loads cleanly even if token is briefly missing during local testing
+# Fallback token logic to prevent module loading exceptions
 VALID_TOKEN = TELEGRAM_TOKEN if (TELEGRAM_TOKEN and ":" in TELEGRAM_TOKEN) else "123456:ABCdefGhIJKlmNoPQRsTUVwxyZ"
 bot_app = Application.builder().token(VALID_TOKEN).build()
 
@@ -47,6 +48,15 @@ correlation_engine = CorrelationEngine()
 asset_intelligence = AssetIntelligenceEngine()
 probability_engine = ProbabilityEngine()
 trade_quality = TradeQualityEngine()
+
+def safe_escape(text: str) -> str:
+    """Escapes special characters to prevent Telegram Markdown parsing syntax errors."""
+    if not text:
+        return ""
+    # Standard Markdown symbols that frequently break parsing layouts when nested
+    for char in ['_', '*', '[', ']', '(', ')', '~', '`', '>', '#', '+', '-', '=', '|', '{', '}', '.', '!']:
+        text = text.replace(char, f"\\{char}")
+    return text
 
 async def fetch_all_data(asset):
     macro_task = asyncio.create_task(asyncio.to_thread(macro_cb.call, macro_engine.fetch))
@@ -89,7 +99,7 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
-        # Highly defensive timestamp normalization
+        # Timestamp Extraction Normalization Layer
         if hasattr(macro_ts, "get"):
             raw_macro_ts = macro_ts.get('dxy') or macro_ts.get('fed')
         else:
@@ -103,18 +113,34 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             clean_macro_ts = datetime.utcnow()
 
+        # Sanitize text contents from third-party arrays to protect Markdown integrity
+        escaped_news_items = []
+        for item in news_items:
+            if hasattr(item, 'title'):
+                item.title = safe_escape(item.title)
+            escaped_news_items.append(item)
+
         explanation = ExplanationEngine.generate(
             asset, price_data.current_price, scores, prob_result["bullish_probability"], prob_result["confidence"],
-            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=news_items,
+            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=escaped_news_items,
             source_reliabilities={"GoldAPI": 0.98, "Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
             macro_timestamp=clean_macro_ts, news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
             model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0)
         )
         
-        explanation += f"\n\n📈 *Calculated Alpha Quality:* {trade_q*100:.0f}%"
-        explanation += " ✅ High Conviction Execution Profile" if trade_q > 0.68 else " ⚡ Neutral Conviction Strategy Holding" if trade_q > 0.48 else " ⏳ Low Conviction Signal Warning"
+        # Build out clean string block avoiding unescaped markdown clashes
+        quality_pct = safe_escape(f"{trade_q*100:.0f}%")
+        explanation += f"\n\n📈 *Calculated Alpha Quality:* {quality_pct}"
+        
+        if trade_q > 0.68:
+            explanation += safe_escape(" ✅ High Conviction Execution Profile")
+        elif trade_q > 0.48:
+            explanation += safe_escape(" ⚡ Neutral Conviction Strategy Holding")
+        else:
+            explanation += safe_escape(" ⏳ Low Conviction Signal Warning")
 
-        await update.message.reply_text(explanation, parse_mode="Markdown")
+        # Switched to MarkdownV2 to gracefully handle nested structural content strings safely
+        await update.message.reply_text(explanation, parse_mode="MarkdownV2")
 
         try:
             log_prediction(
@@ -129,13 +155,12 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
             logger.warning(f"Auditing tracking engine log skipped: {e}")
 
     except DataValidationError as e:
-        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {e}")
+        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {safe_escape(str(e))}", parse_mode="MarkdownV2")
     except Exception as e:
         ERROR_COUNT.inc()
         logger.error(f"Execution Error processing requests on signature /{asset}: {e}", exc_info=True)
-        # Expose the precise exception message and type directly to the bot chat for live debugging
-        error_msg = f"❌ **Execution Crash Details**\n* Type: `{type(e).__name__}`\n* Message: `{str(e)}`"
-        await update.message.reply_text(error_msg, parse_mode="Markdown")
+        # Fallback raw text parsing response to avoid recursive layout rendering loops if debugging fails
+        await update.message.reply_text(f"System processing error parsing {asset.upper()} asset matrix. Reason: {str(e)}")
         
     REQUEST_LATENCY.observe((datetime.utcnow() - start).total_seconds())
 
