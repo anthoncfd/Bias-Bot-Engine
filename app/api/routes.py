@@ -4,7 +4,7 @@ from fastapi import APIRouter, Request, Response
 from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
-import pandas as pd  # Added to safely cast database/pandas timestamps to native python datetimes
+import pandas as pd
 from prometheus_client import generate_latest, Counter, Histogram
 
 from app.config import TELEGRAM_TOKEN, ASSET_MAP
@@ -26,7 +26,10 @@ from app.engines.calibration import MODEL_VERSION
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
-bot_app = Application.builder().token(TELEGRAM_TOKEN).build()
+
+# Fallback string ensures the router module loads cleanly even if token is briefly missing during local testing
+VALID_TOKEN = TELEGRAM_TOKEN if (TELEGRAM_TOKEN and ":" in TELEGRAM_TOKEN) else "123456:ABCdefGhIJKlmNoPQRsTUVwxyZ"
+bot_app = Application.builder().token(VALID_TOKEN).build()
 
 REQUEST_COUNT = Counter('bot_requests_total', 'Total bot requests')
 REQUEST_LATENCY = Histogram('bot_request_latency_seconds', 'Request latency')
@@ -86,7 +89,7 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
-        # Normalized macro_ts processing to guarantee safe string rendering execution paths
+        # Safely convert macro timestamp keys to true datetimes to avoid unhandled type errors in strftime
         raw_macro_ts = macro_ts.get('dxy')
         clean_macro_ts = pd.to_datetime(raw_macro_ts).to_pydatetime() if raw_macro_ts else None
 
