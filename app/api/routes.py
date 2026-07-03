@@ -89,7 +89,7 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
-        # Highly defensive timestamp normalization to prevent type errors regardless of macro_ts structure
+        # Highly defensive timestamp normalization
         if hasattr(macro_ts, "get"):
             raw_macro_ts = macro_ts.get('dxy') or macro_ts.get('fed')
         else:
@@ -133,7 +133,9 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
     except Exception as e:
         ERROR_COUNT.inc()
         logger.error(f"Execution Error processing requests on signature /{asset}: {e}", exc_info=True)
-        await update.message.reply_text(f"System processing error parsing {asset.upper()} asset matrix.")
+        # Expose the precise exception message and type directly to the bot chat for live debugging
+        error_msg = f"❌ **Execution Crash Details**\n* Type: `{type(e).__name__}`\n* Message: `{str(e)}`"
+        await update.message.reply_text(error_msg, parse_mode="Markdown")
         
     REQUEST_LATENCY.observe((datetime.utcnow() - start).total_seconds())
 
