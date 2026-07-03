@@ -12,6 +12,10 @@ app.include_router(router)
 
 @app.on_event("startup")
 async def startup():
+    if not TELEGRAM_TOKEN or ":" not in TELEGRAM_TOKEN:
+        logger.critical("⚠️ CRITICAL ERROR: TELEGRAM_TOKEN environment variable is unassigned or format is invalid!")
+        return
+        
     if WEBHOOK_URL and TELEGRAM_TOKEN:
         try:
             await bot_app.initialize()
@@ -23,6 +27,8 @@ async def startup():
 
 @app.on_event("shutdown")
 async def shutdown():
+    if not TELEGRAM_TOKEN or ":" not in TELEGRAM_TOKEN:
+        return
     try:
         await bot_app.stop()
         await bot_app.shutdown()
