@@ -5,10 +5,12 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, ContextTypes
 from datetime import datetime
 import pandas as pd
+import html
 import re
+import httpx
 from prometheus_client import generate_latest, Counter, Histogram
 
-from app.config import TELEGRAM_TOKEN, ASSET_MAP
+from app.config import TELEGRAM_TOKEN, ASSET_MAP, RAPIDAPI_KEY
 from app.services.price_service import PriceService
 from app.services.circuit_breaker import CircuitBreaker
 from app.engines.technical_engine import TechnicalEngine
@@ -28,7 +30,6 @@ from app.engines.calibration import MODEL_VERSION
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-# Fallback token logic to prevent module loading exceptions
 VALID_TOKEN = TELEGRAM_TOKEN if (TELEGRAM_TOKEN and ":" in TELEGRAM_TOKEN) else "123456:ABCdefGhIJKlmNoPQRsTUVwxyZ"
 bot_app = Application.builder().token(VALID_TOKEN).build()
 
@@ -49,12 +50,59 @@ asset_intelligence = AssetIntelligenceEngine()
 probability_engine = ProbabilityEngine()
 trade_quality = TradeQualityEngine()
 
-def clean_raw_text(text: str) -> str:
-    """Removes special characters from third-party strings that break traditional Telegram Markdown."""
+def convert_md_to_html(text: str) -> str:
+    """Converts basic Markdown markers into stable HTML strings to avoid Telegram parsing failures."""
     if not text:
         return ""
-    # Strip characters that conflict with basic Markdown tags inside headlines
-    return re.sub(r'[_*`\[\]()]', '', text)
+    text = html.escape(text)
+    text = text.replace("&amp;#x27;", "'").replace("&amp;quot;", '"')
+    text = re.sub(r'\*(.*?)\*', r'<b>\1</b>', text)
+    text = re.sub(r'_(.*?)_', r'<i>\1</i>', text)
+    return text
+
+def fetch_metal_sentinel_spot_gold() -> pd.DataFrame:
+    """
+    Fallback mechanism leveraging the Metal Sentinel API on RapidAPI.
+    Fetches raw spot gold (XAU) vs USD history, guaranteeing zero reliance on futures contracts.
+    """
+    url = "https://metal-sentinel.p.rapidapi.com/metal-history"
+    headers = {
+        "x-rapidapi-key": RAPIDAPI_KEY or "YOUR-FALLBACK-KEY",
+        "x-rapidapi-host": "metal-sentinel.p.rapidapi.com"
+    }
+    # Requests 60 days of spot gold depth explicitly mapped to historical close arrays
+    params = {"metal": "gold", "currency": "USD", "days": "60"}
+    
+    with httpx.Client() as client:
+        response = client.get(url, headers=headers, params=params, timeout=12.0)
+        
+    if response.status_code != 200:
+        raise RuntimeError(f"Metal Sentinel Spot API returned bad status code: {response.status_code}")
+        
+    data = response.json()
+    history = data.get("history", []) # Expected raw timeline array from provider
+    
+    records = []
+    for entry in history:
+        # Expected response structure: {"date": "YYYY-MM-DD", "price": 2345.67}
+        date_val = pd.to_datetime(entry.get("date"))
+        price_val = float(entry.get("price", 0))
+        
+        if price_val > 0:
+            records.append({
+                "Date": date_val, 
+                "Open": price_val, 
+                "High": price_val, 
+                "Low": price_val, 
+                "Close": price_val, 
+                "Volume": 0
+            })
+            
+    df = pd.DataFrame(records)
+    if df.empty:
+        raise ValueError("Metal Sentinel Spot historical transformation generated empty dataframe.")
+        
+    return df.set_index("Date").sort_index()
 
 async def fetch_all_data(asset):
     macro_task = asyncio.create_task(asyncio.to_thread(macro_cb.call, macro_engine.fetch))
@@ -75,7 +123,22 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
     start = datetime.utcnow()
     try:
         price_data = price_cb.call(price_service.get_price, asset)
-        hist = price_service.get_historical_data(asset, days=60)
+        
+        # Resilient Spot Data Pipeline Routing Layer
+        try:
+            hist = price_service.get_historical_data(asset, days=60)
+        except Exception as e:
+            logger.warning(f"Primary historical service failed for {asset}: {e}. Calling secondary spot layer...")
+            if asset == "xauusd":
+                hist = fetch_metal_sentinel_spot_gold()
+            else:
+                # Core forex pairs fall back to native spot ticker tracks safely
+                import yfinance as yf
+                hist = yf.download(f"{asset.upper()}=X", period="60d")
+                
+            if hist.empty:
+                raise RuntimeError(f"Primary and secondary spot historical systems both failed for {asset}")
+
         price_data = DataValidationEngine.validate_price(price_data, hist)
 
         tech_indicators = TechnicalEngine.calculate(hist, price_data.current_price)
@@ -97,7 +160,6 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         trade_q = trade_quality.score(asset, tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, prob_result["confidence"])
 
-        # Timestamp Extraction Normalization Layer
         if hasattr(macro_ts, "get"):
             raw_macro_ts = macro_ts.get('dxy') or macro_ts.get('fed')
         else:
@@ -111,33 +173,25 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
         else:
             clean_macro_ts = datetime.utcnow()
 
-        # Sanitize text contents from third-party arrays to protect traditional Markdown integrity
-        cleaned_news_items = []
-        for item in news_items:
-            if hasattr(item, 'title'):
-                item.title = clean_raw_text(item.title)
-            cleaned_news_items.append(item)
-
         explanation = ExplanationEngine.generate(
             asset, price_data.current_price, scores, prob_result["bullish_probability"], prob_result["confidence"],
-            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=cleaned_news_items,
-            source_reliabilities={"GoldAPI": 0.98, "Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
+            dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=news_items,
+            source_reliabilities={"GoldAPI": 0.98, "MetalSentinel": 0.97, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
             macro_timestamp=clean_macro_ts, news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
             model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0)
         )
         
-        # Build out clean string block using standard, resilient legacy Markdown parsing
-        explanation += f"\n\n📈 *Calculated Alpha Quality:* {trade_q*100:.0f}%"
+        html_explanation = convert_md_to_html(explanation)
         
+        html_explanation += f"\n\n📈 <b>Calculated Alpha Quality:</b> {trade_q*100:.0f}%"
         if trade_q > 0.68:
-            explanation += " ✅ High Conviction Execution Profile"
+            html_explanation += " ✅ High Conviction Execution Profile"
         elif trade_q > 0.48:
-            explanation += " ⚡ Neutral Conviction Strategy Holding"
+            html_explanation += " ⚡ Neutral Conviction Strategy Holding"
         else:
-            explanation += " ⏳ Low Conviction Signal Warning"
+            html_explanation += " ⏳ Low Conviction Signal Warning"
 
-        # Reverted back to the standard resilient Markdown parser
-        await update.message.reply_text(explanation, parse_mode="Markdown")
+        await update.message.reply_text(html_explanation, parse_mode="HTML")
 
         try:
             log_prediction(
@@ -149,15 +203,14 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
                 data_source=price_data.provider, proxy_used=price_data.proxy_used
             )
         except Exception as e:
-            logger.warning(f"Auditing tracking engine log skipped: {e}")
+            logger.warning(f"Auditing tracking engine prediction log bypassed: {e}")
 
     except DataValidationError as e:
-        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {str(e)}")
+        await update.message.reply_text(f"⚠️ Inbound Validation Rejection: {html.escape(str(e))}")
     except Exception as e:
         ERROR_COUNT.inc()
         logger.error(f"Execution Error processing requests on signature /{asset}: {e}", exc_info=True)
-        # Safe fallback response using unformatted raw layout strings to completely prevent parsing crashes
-        await update.message.reply_text(f"System processing error parsing {asset.upper()} asset matrix. Reason: {str(e)}")
+        await update.message.reply_text(f"System processing error parsing {asset.upper()} asset matrix. Reason: {html.escape(str(e))}")
         
     REQUEST_LATENCY.observe((datetime.utcnow() - start).total_seconds())
 
