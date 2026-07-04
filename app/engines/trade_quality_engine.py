@@ -13,7 +13,6 @@ class TradeQualityEngine:
             if not supabase:
                 return None, None
             try:
-                # Require historical proof before enabling predictive analysis layer mapping models
                 result = supabase.table('predictions').select(
                     'tech_score, macro_score, sent_score, news_score, atr_ratio, corr_score, confidence, outcome_correct'
                 ).eq('outcome_evaluated', True).eq('asset', asset).execute()
