@@ -89,10 +89,10 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
         )
 
     try:
-        # Initialize Google Gen AI Client using the modern official SDK
+        # Initialize Google Gen AI Client natively
         client = genai.Client(api_key=api_key)
         
-        # Flawlessly execute async request via standard .aio pipeline routing
+        # Flawlessly route via the true non-blocking .aio pipeline interface
         response = await client.aio.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt
@@ -114,13 +114,16 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
 async def calculate_asset_bias(asset: str) -> dict:
     """Orchestrates asset metrics calculations, macro processing, and quote matching."""
     asset_upper = asset.strip().upper()
-    yf_ticker = asset_upper
     
-    # Asset translation layers - Fixed string concat error causing previous pipeline failures
-    if "USD" in asset_upper and len(asset_upper) == 6:
-        yf_ticker = f"{asset_upper}=X" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
+    # Clean standard translation routing for Forex, Indexes, and Crypto assets
+    if len(asset_upper) == 6 and not asset_upper.startswith(("^", "BTC")):
+        yf_ticker = f"{asset_upper}=X"
+    elif "BTCUSD" in asset_upper:
+        yf_ticker = "BTC-USD"
     elif asset_upper == "JP225":
         yf_ticker = "^N225"
+    else:
+        yf_ticker = asset_upper
 
     try:
         ticker_obj = yf.Ticker(yf_ticker)
@@ -157,7 +160,6 @@ async def calculate_asset_bias(asset: str) -> dict:
             "prev_close": prev_close,
             "sma_20": current_sma,
             "z_score": z_score,
-            # Grabs a single random distinct quote tied to the active market bias context
             "quote": random.choice(RISK_QUOTES[bias_key]) 
         }
 
@@ -165,7 +167,7 @@ async def calculate_asset_bias(asset: str) -> dict:
         macro_events = await fetch_recent_macro_events(asset_upper)
         base_technicals["news"] = "\n".join([f"• {e['event']}: Expected {e['forecast']}, printed {e['actual']} ({e['impact']} Impact)" for e in macro_events])
         
-        # Fire contextual data arrays off to Gemini 1.5 Flash
+        # Fire non-blocking asynchronous data payloads over to the Gemini Inference Engine
         base_technicals["macro_inference"] = await generate_ai_macro_inference(asset_upper, base_technicals, macro_events)
 
         return base_technicals
