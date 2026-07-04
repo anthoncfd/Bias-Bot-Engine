@@ -14,18 +14,23 @@ class TechnicalEngine:
         closes = df['Close']
         sma20 = closes.tail(20).mean()
         sma50 = closes.tail(50).mean()
-        recent_closes = closes.tail(30)
-        std_dev = recent_closes.std()
-        z_score = (current_price - recent_closes.mean()) / std_dev if std_dev != 0 else 0
+        
+        # Accurate Z-Score using rolling window standardization
+        rolling_mean = closes.rolling(window=20).mean().iloc[-1]
+        rolling_std = closes.rolling(window=20).std().iloc[-1]
+        z_score = (current_price - rolling_mean) / rolling_std if rolling_std != 0 else 0
         
         high, low, close = df['High'], df['Low'], df['Close']
         tr1 = high - low
         tr2 = abs(high - close.shift())
         tr3 = abs(low - close.shift())
         tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.tail(14).mean()
+        
+        # Institutional standard Wilder's Smoothing for ATR
+        atr = tr.ewm(alpha=1/14, adjust=False).mean().iloc[-1]
         
         momentum = ((current_price / closes.iloc[-5]) - 1) * 100 if len(closes) >= 5 else 0
+        
         x = np.arange(len(closes.tail(20)))
         y = closes.tail(20).values
         slope, _ = np.polyfit(x, y, 1)
