@@ -5,6 +5,7 @@ on:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch: # 🚀 FORCE ENABLES THE "RUN WORKFLOW" MANUAL BUTTON
 
 jobs:
   build-and-verify:
@@ -18,7 +19,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: '3.11'
-        cache: 'pip' # Automatically caches requirements to speed up actions runs
+        cache: 'pip' # Speeds up execution by caching requirements matrix layers
 
     - name: Upgrade core packaging utilities
       run: |
@@ -30,12 +31,5 @@ jobs:
 
     - name: Run lint and compilation structural safety checks
       run: |
-        # Compiles modules to capture hidden syntax/formatting errors before deployment
+        # Compiles modules to catch structural formatting anomalies or circular locks before deployment
         python -m compileall app/
-
-    # Optional Step: Uncomment if you write unit tests for your macro calculus layouts
-    # - name: Execute Macro Calculus Engine tests
-    #   env:
-    #     TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-    #   run: |
-    #     pytest
