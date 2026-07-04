@@ -8,12 +8,14 @@ logger = logging.getLogger(__name__)
 
 class CorrelationEngine:
     CORRELATION_MAP = {
-        "xauusd": ["DX-Y.NYB", "^TNX", "^VIX"],
-        "xagusd": ["DX-Y.NYB", "GC=F", "^VIX"],
         "eurusd": ["DX-Y.NYB", "^TNX"],
         "gbpusd": ["DX-Y.NYB", "^TNX"],
         "audusd": ["DX-Y.NYB", "CL=F"],
+        "gbpjpy": ["DX-Y.NYB", "^TNX"],
+        "eurjpy": ["DX-Y.NYB", "^TNX"],
+        "usdchf": ["DX-Y.NYB", "^TNX"],
         "usdcad": ["CL=F", "DX-Y.NYB"],
+        "cadchf": ["DX-Y.NYB", "^TNX"],
         "btcusd": ["ETH-USD", "^IXIC", "DX-Y.NYB"],
         "ethusd": ["BTC-USD", "^IXIC", "DX-Y.NYB"],
         "us30": ["^VIX", "DX-Y.NYB"],
