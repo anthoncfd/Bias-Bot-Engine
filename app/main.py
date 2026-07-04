@@ -1,38 +1,76 @@
+import os
 import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.api.routes import router, bot_app
-from app.config import WEBHOOK_URL, TELEGRAM_TOKEN
 import uvicorn
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
-logger = logging.getLogger(__name__)
+# Setup logging pattern
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger("macro_engine.main")
 
-app = FastAPI(title="Market Intelligence Bot V4.3")
-app.include_router(router)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """
+    Handles startup and shutdown events cleanly.
+    Put any background tasks or database connection pools here.
+    """
+    logger.info("Initializing Macro Bias Engine Core Components...")
+    
+    # Example: If you use python-telegram-bot application long-polling:
+    # from app.bot.telegram_client import bot_application
+    # await bot_application.initialize()
+    # await bot_application.start()
+    # logger.info("Telegram interface online.")
+    
+    yield
+    
+    logger.info("Shutting down Macro Bias Engine systems...")
+    # Example clean shutdown:
+    # await bot_application.stop()
+    # await bot_application.shutdown()
 
-@app.on_event("startup")
-async def startup():
-    if WEBHOOK_URL and TELEGRAM_TOKEN:
-        try:
-            await bot_app.initialize()
-            await bot_app.bot.set_webhook(f"{WEBHOOK_URL}/webhook")
-            await bot_app.start()
-            logger.info("Telegram Webhook set successfully.")
-        except Exception as e:
-            logger.error(f"Failed to initialize Telegram Webhook on startup: {e}")
-
-@app.on_event("shutdown")
-async def shutdown():
-    try:
-        await bot_app.stop()
-        await bot_app.shutdown()
-        logger.info("Telegram application cleanly shut down.")
-    except Exception as e:
-        logger.error(f"Error during shutdown sequence: {e}")
+# Initialize FastAPI App
+app = FastAPI(
+    title="Macro Bias Engine API",
+    version="1.0.0",
+    lifespan=lifespan
+)
 
 @app.get("/")
-async def root():
-    return {"status": "Market Intelligence Engine V4.3 - Institutional Grade Active"}
+async def root_health_check():
+    """
+    Crucial endpoint for Render's deployment engine.
+    Returns 200 OK instantly to pass the platform's HTTP connection scan.
+    """
+    return {
+        "status": "healthy",
+        "engine": "Macro Bias Engine",
+        "timezone": "UTC"
+    }
+
+@app.get("/api/v1/health")
+async def api_health():
+    return {"status": "operational"}
 
 if __name__ == "__main__":
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000)
+    # Pull dynamic port structural value assigned by Render environment
+    # Fallback natively to 8000 for local workspace testing profiles
+    port_env = os.environ.get("PORT", "8000")
+    
+    try:
+        bind_port = int(port_env)
+    except ValueError:
+        logger.warning(f"Invalid PORT environment assignment string: '{port_env}'. Defaulting to 8000.")
+        bind_port = 8000
+
+    logger.info(f"Launching ASGI application layer on host 0.0.0.0 binding to port: {bind_port}")
+    
+    uvicorn.run(
+        "app.main:app", 
+        host="0.0.0.0", 
+        port=bind_port,
+        workers=1
+    )
