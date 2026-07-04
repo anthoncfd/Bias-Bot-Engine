@@ -43,7 +43,7 @@ class ExplanationEngine:
                 reliability_text += f"  • {src}: {rel*100:.0f}%\n"
 
         return (
-            f"📊 *{asset.upper()} Institutional Analysis Engine V4.2*\n"
+            f"📊 *{asset.upper()} Institutional Analysis Engine V4.3*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
             f"💵 *Spot Price:* ${price:.4f}\n"
             f"📈 *Directional Alpha Bias:* {direction}\n"
@@ -61,5 +61,6 @@ class ExplanationEngine:
             f"🔍 *System Factor Audit Trail:*\n{audit}\n"
             f"⏱️ *Data Layer Integrity Verification:*\n{timestamps}\n"
             f"{reliability_text}\n"
-            f"⚡ *Data Nodes:* GoldAPI / Yahoo Finance / FRED / Gemini API Pipeline Layer Active."
+            f"⚡ *Data Nodes:* Yahoo Finance / FRED / Gemini API\n"
+            f"🛡️ *Engineered by @anthonycfd*"
         )
