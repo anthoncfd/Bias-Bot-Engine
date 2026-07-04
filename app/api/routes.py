@@ -48,7 +48,9 @@ async def fetch_all_data(asset):
     macro_task = asyncio.create_task(asyncio.to_thread(macro_cb.call, macro_engine.fetch))
     sent_task = asyncio.create_task(asyncio.to_thread(sent_engine.fetch))
     news_task = asyncio.create_task(news_engine.fetch_async(asset))
-    macro_data, macro_ts = await macro_task
+    
+    # FIXED: Unpack 3 arguments instead of 2 to match macro_engine.fetch return signature
+    macro_data, macro_ts, _ = await macro_task
     sent_data = await sent_task
     news_items = await news_task
     return macro_data, macro_ts, sent_data, news_items
@@ -71,7 +73,22 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         macro_data, macro_ts, sent_data, news_items = await fetch_all_data(asset)
         macro_score = await asyncio.to_thread(macro_engine.score, macro_data, asset, {})
-        macro_extra = macro_engine.get_extra()  # <--- NEW: capture extra info
+        macro_extra = macro_engine.get_extra()
+
+        # Ensure macro_extra is a dict with expected keys
+        if not macro_extra or not isinstance(macro_extra, dict):
+            macro_extra = {
+                "bias": "N/A",
+                "confidence": 0.0,
+                "regime": "N/A",
+                "news": "No news",
+                "quote": ""
+            }
+        # Ensure all keys exist
+        required_keys = {"bias", "confidence", "regime", "news", "quote"}
+        for key in required_keys:
+            if key not in macro_extra:
+                macro_extra[key] = "N/A" if key != "confidence" else 0.0
 
         sent_score = await asyncio.to_thread(sent_engine.score, sent_data, asset)
         news_score = await asyncio.to_thread(news_engine.score, news_items)
@@ -93,11 +110,16 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
             source_reliabilities={"Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
             macro_timestamp=macro_ts.get('dxy'), news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
             model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0),
-            macro_extra=macro_extra  # <--- NEW: pass extra macro info
+            macro_extra=macro_extra
         )
         
         explanation += f"\n\n📈 *Calculated Alpha Quality:* {trade_q*100:.0f}%"
-        explanation += " ✅ High Conviction Execution Profile" if trade_q > 0.68 else " ⚡ Neutral Conviction Strategy Holding" if trade_q > 0.48 else " ⏳ Low Conviction Signal Warning"
+        if trade_q > 0.68:
+            explanation += " ✅ High Conviction Execution Profile"
+        elif trade_q > 0.48:
+            explanation += " ⚡ Neutral Conviction Strategy Holding"
+        else:
+            explanation += " ⏳ Low Conviction Signal Warning"
 
         await update.message.reply_text(explanation, parse_mode="Markdown")
 
@@ -122,6 +144,7 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
     REQUEST_LATENCY.observe((datetime.utcnow() - start).total_seconds())
 
+# Register all command handlers
 for cmd in ASSET_MAP.keys():
     bot_app.add_handler(CommandHandler(cmd, handle_asset_command))
 
