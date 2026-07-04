@@ -11,6 +11,9 @@ from app.models import MacroData
 
 logger = logging.getLogger(__name__)
 
+# ------------------------------------------------------------
+# Yahoo V8 API – direct, no yfinance
+# ------------------------------------------------------------
 def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
     """
     Fetch OHLC data from Yahoo's V8 chart API.
@@ -78,6 +81,9 @@ def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
         logger.error(f"Yahoo V8 fetch error for {ticker}: {e}")
         return pd.DataFrame()
 
+# ------------------------------------------------------------
+# Macro News (Reuters RSS)
+# ------------------------------------------------------------
 def fetch_macro_news(asset: str) -> str:
     try:
         feed_url = "https://www.reutersagency.com/feed/?best-topics=economy"
@@ -106,6 +112,9 @@ def fetch_macro_news(asset: str) -> str:
         logger.error(f"News fetch error: {e}")
         return "• Macro news feed temporarily unavailable."
 
+# ------------------------------------------------------------
+# Regime Quote
+# ------------------------------------------------------------
 def get_regime_quote(bias_state: str) -> str:
     quotes = {
         "STRONG BULLISH": [
@@ -133,11 +142,20 @@ def get_regime_quote(bias_state: str) -> str:
     selected_pool = quotes.get(clean_key, quotes["NEUTRAL"])
     return random.choice(selected_pool)
 
+# ------------------------------------------------------------
+# Main MacroEngine – now uses V8 API, no yfinance/fredapi
+# ------------------------------------------------------------
 class MacroEngine:
     def __init__(self):
         self._extra = {}
 
     def fetch(self) -> tuple[MacroData, dict, dict]:
+        """
+        Returns:
+          - MacroData: DXY, US10Y, US2Y, fed_funds, cpi_yoy, payrolls, pmi (all from V8)
+          - timestamps: dict with when each was fetched
+          - extra: dict with 'bias', 'confidence', 'regime', 'news', 'quote'
+        """
         dxy_df = fetch_yahoo_v8("DX-Y.NYB", days=5)
         us10y_df = fetch_yahoo_v8("^TNX", days=5)
         us2y_df = fetch_yahoo_v8("^FVX", days=5)
@@ -146,6 +164,7 @@ class MacroEngine:
         us10y = float(us10y_df['Close'].iloc[-1]) if not us10y_df.empty else 4.2
         us2y = float(us2y_df['Close'].iloc[-1]) if not us2y_df.empty else 4.5
 
+        # Placeholder values – can be replaced with FRED later
         fed_funds = 5.25
         cpi_yoy = 3.0
         payrolls = 180.0
@@ -162,6 +181,10 @@ class MacroEngine:
         return macro, timestamps, {}
 
     def score(self, macro: MacroData, asset: str, surprises: dict = None) -> float:
+        """
+        Compute a numeric macro score (-1..1) based on the asset.
+        Also computes bias, news, quote and stores them in self._extra.
+        """
         df = fetch_yahoo_v8(asset, days=60)
         if df.empty or len(df) < 22:
             score = 0.0
@@ -235,4 +258,23 @@ class MacroEngine:
         return float(np.clip(blended, -1, 1))
 
     def get_extra(self):
+        """Return the extra info computed during the last score() call."""
         return getattr(self, '_extra', {})
+
+# ------------------------------------------------------------
+# Backward-Compatibility Bridge for Legacy Services
+# ------------------------------------------------------------
+async def calculate_asset_bias(asset: str) -> dict:
+    """
+    Acts as a routing bridge for legacy instances (like app/services/telegram_bot.py)
+    that look to import calculate_asset_bias as a module-level function.
+    """
+    engine = MacroEngine()
+    # Mock fallback baseline macro container
+    mock_macro = MacroData(
+        dxy=102.0, us10y=4.2, us2y=4.5, 
+        fed_funds=5.25, cpi_yoy=3.0, payrolls=180.0, pmi=49.5
+    )
+    # Run historical evaluations and populate extra maps
+    engine.score(mock_macro, asset)
+    return engine.get_extra()
