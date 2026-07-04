@@ -6,23 +6,24 @@ import numpy as np
 import pandas as pd
 import requests
 import feedparser
-from datetime import datetime, timezone
+from datetime import datetime
 from app.models import MacroData
+import yfinance as yf  # fallback
 
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
-# Yahoo V8 API – direct, no yfinance
+# Yahoo V8 API – with fallback to yfinance
 # ------------------------------------------------------------
 def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
     """
     Fetch OHLC data from Yahoo's V8 chart API.
-    Returns DataFrame with 'Close' (and optionally Open, High, Low, Volume).
+    Falls back to yfinance if V8 fails.
     """
     if symbol.endswith("=X"):
         ticker = symbol.upper()
     else:
-        ticker = f"{symbol.upper()}=X"
+        ticker = f"{symbol.upper()}=X" if not symbol.startswith("^") else symbol.upper()
 
     end_time = int(time.time())
     start_time = end_time - (days * 24 * 60 * 60)
@@ -47,13 +48,14 @@ def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
     try:
         response = requests.get(url, params=params, headers=headers, timeout=10)
         if response.status_code != 200:
-            logger.error(f"Yahoo V8 API returned {response.status_code} for {ticker}")
-            return pd.DataFrame()
+            logger.warning(f"V8 API returned {response.status_code} for {ticker}, falling back to yfinance.")
+            return _fetch_yfinance(ticker, days)
 
         data = response.json()
         result = data.get("chart", {}).get("result", [])
         if not result:
-            return pd.DataFrame()
+            logger.warning(f"V8 API returned empty result for {ticker}, falling back to yfinance.")
+            return _fetch_yfinance(ticker, days)
 
         timestamps = result[0].get("timestamp", [])
         quote = result[0].get("indicators", {}).get("quote", [{}])[0]
@@ -64,7 +66,8 @@ def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
         volumes = quote.get("volume", [])
 
         if not timestamps or not closes:
-            return pd.DataFrame()
+            logger.warning(f"V8 API missing close data for {ticker}, falling back to yfinance.")
+            return _fetch_yfinance(ticker, days)
 
         df = pd.DataFrame({
             "Close": closes,
@@ -78,8 +81,25 @@ def fetch_yahoo_v8(symbol: str, days: int = 60) -> pd.DataFrame:
         return df
 
     except Exception as e:
-        logger.error(f"Yahoo V8 fetch error for {ticker}: {e}")
-        return pd.DataFrame()
+        logger.warning(f"V8 API error for {ticker}: {e}, falling back to yfinance.")
+        return _fetch_yfinance(ticker, days)
+
+def _fetch_yfinance(symbol: str, days: int) -> pd.DataFrame:
+    """Fallback to yfinance with column MultiIndex safety flattening."""
+    try:
+        if symbol.endswith("=X") or symbol.startswith("^"):
+            ticker = symbol
+        else:
+            ticker = f"{symbol}=X"
+        df = yf.download(ticker, period=f"{days+5}d", progress=False)
+        if not df.empty:
+            # FIXED: Flatten MultiIndex columns to handle new yfinance behavior safely
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+            return df[['Open','High','Low','Close','Volume']].tail(days)
+    except Exception as e:
+        logger.error(f"yfinance fallback failed for {symbol}: {e}")
+    return pd.DataFrame()
 
 # ------------------------------------------------------------
 # Macro News (Reuters RSS)
@@ -91,11 +111,14 @@ def fetch_macro_news(asset: str) -> str:
         feed = feedparser.parse(response.content)
 
         keywords = ["fed", "ecb", "inflation", "rate", "usd", "eur", "jpy", "macro"]
-        asset_upper = asset.upper()
-        if "EUR" in asset_upper: keywords.extend(["euro", "europe", "lagarde"])
-        if "JPY" in asset_upper: keywords.extend(["yen", "japan", "boj"])
-        if "GBP" in asset_upper: keywords.extend(["pound", "boe", "uk"])
-        if "AUD" in asset_upper: keywords.extend(["aussie", "rba"])
+        if "EUR" in asset.upper():
+            keywords.extend(["euro", "europe", "lagarde"])
+        if "JPY" in asset.upper():
+            keywords.extend(["yen", "japan", "boj"])
+        if "GBP" in asset.upper():
+            keywords.extend(["pound", "boe", "uk"])
+        if "AUD" in asset.upper():
+            keywords.extend(["aussie", "rba"])
 
         headlines = []
         for entry in feed.entries[:10]:
@@ -143,19 +166,13 @@ def get_regime_quote(bias_state: str) -> str:
     return random.choice(selected_pool)
 
 # ------------------------------------------------------------
-# Main MacroEngine – now uses V8 API, no yfinance/fredapi
+# Main MacroEngine
 # ------------------------------------------------------------
 class MacroEngine:
     def __init__(self):
         self._extra = {}
 
-    def fetch(self) -> tuple[MacroData, dict, dict]:
-        """
-        Returns:
-          - MacroData: DXY, US10Y, US2Y, fed_funds, cpi_yoy, payrolls, pmi (all from V8)
-          - timestamps: dict with when each was fetched
-          - extra: dict with 'bias', 'confidence', 'regime', 'news', 'quote'
-        """
+    def fetch(self):
         dxy_df = fetch_yahoo_v8("DX-Y.NYB", days=5)
         us10y_df = fetch_yahoo_v8("^TNX", days=5)
         us2y_df = fetch_yahoo_v8("^FVX", days=5)
@@ -164,43 +181,49 @@ class MacroEngine:
         us10y = float(us10y_df['Close'].iloc[-1]) if not us10y_df.empty else 4.2
         us2y = float(us2y_df['Close'].iloc[-1]) if not us2y_df.empty else 4.5
 
-        # Placeholder values – can be replaced with FRED later
-        fed_funds = 5.25
-        cpi_yoy = 3.0
-        payrolls = 180.0
-        pmi = 49.5
-
         macro = MacroData(
-            dxy=dxy, us10y=us10y, us2y=us2y,
-            fed_funds=fed_funds, cpi_yoy=cpi_yoy,
-            payrolls=payrolls, pmi=pmi
+            dxy=dxy,
+            us10y=us10y,
+            us2y=us2y,
+            fed_funds=5.25,
+            cpi_yoy=3.0,
+            payrolls=180.0,
+            pmi=49.5
         )
 
-        now = datetime.now(timezone.utc)
-        timestamps = {'dxy': now, 'us10y': now, 'fred_fed': now, 'fred_cpi': now}
+        timestamps = {
+            'dxy': datetime.utcnow(),
+            'us10y': datetime.utcnow(),
+            'fred_fed': datetime.utcnow(),
+            'fred_cpi': datetime.utcnow()
+        }
+
         return macro, timestamps, {}
 
     def score(self, macro: MacroData, asset: str, surprises: dict = None) -> float:
-        """
-        Compute a numeric macro score (-1..1) based on the asset.
-        Also computes bias, news, quote and stores them in self._extra.
-        """
         df = fetch_yahoo_v8(asset, days=60)
+
+        default_extra = {
+            "bias": "⚪ NEUTRAL",
+            "regime": "Data Unavailable",
+            "confidence": 50.0,
+            "news": "• No news available.",
+            "quote": "\"The market is always right.\"",
+            "live_price": 0.0,
+            "sma_20": 0.0,
+            "z_score": 0.0,
+            "prev_close": 0.0
+        }
+
         if df.empty or len(df) < 22:
-            score = 0.0
-            score += (101.5 - macro.dxy) / 4.0 * 0.3
-            score += (4.0 - macro.us10y) / 1.5 * 0.2
-            score += (2.5 - macro.cpi_yoy) / 1.5 * 0.2
-            score += (4.25 - macro.fed_funds) / 1.5 * 0.2
-            score += (macro.pmi - 50.0) / 7.0 * 0.1
-            self._extra = {
-                "bias": "⚪ NEUTRAL",
-                "regime": "Fault Loop Intercepted (Fallback Framework)",
-                "confidence": 50.0,
-                "news": "• Advanced scraping frames dropped to fallback channels.",
-                "quote": "\"In trading, the market tells you what to do, not vice versa.\"",
-                "live_price": 0.0, "sma_20": 0.0, "z_score": 0.0, "prev_close": 0.0
-            }
+            logger.warning(f"Insufficient data for {asset}, using fallback macro score.")
+            self._extra = default_extra
+            dxy_score = (101.5 - macro.dxy) / 4.0
+            us10y_score = (4.0 - macro.us10y) / 1.5
+            cpi_score = (2.5 - macro.cpi_yoy) / 1.5
+            fed_score = (4.25 - macro.fed_funds) / 1.5
+            pmi_score = (macro.pmi - 50.0) / 7.0
+            score = 0.3*dxy_score + 0.2*us10y_score + 0.2*cpi_score + 0.2*fed_score + 0.1*pmi_score
             return float(np.clip(score, -1, 1))
 
         df['Close'] = df['Close'].astype(float)
@@ -242,9 +265,15 @@ class MacroEngine:
         trading_quote = get_regime_quote(bias_state)
 
         self._extra = {
-            "bias": bias_state, "regime": regime_state, "confidence": confidence_level,
-            "news": macro_news, "quote": trading_quote, "live_price": live_price,
-            "sma_20": current_sma, "z_score": current_z, "prev_close": prev_close
+            "bias": bias_state,
+            "regime": regime_state,
+            "confidence": confidence_level,
+            "news": macro_news,
+            "quote": trading_quote,
+            "live_price": live_price,
+            "sma_20": current_sma,
+            "z_score": current_z,
+            "prev_close": prev_close
         }
 
         dxy_score = (101.5 - macro.dxy) / 4.0
@@ -252,29 +281,9 @@ class MacroEngine:
         cpi_score = (2.5 - macro.cpi_yoy) / 1.5
         fed_score = (4.25 - macro.fed_funds) / 1.5
         pmi_score = (macro.pmi - 50.0) / 7.0
-
-        traditional = 0.3 * dxy_score + 0.2 * us10y_score + 0.2 * cpi_score + 0.2 * fed_score + 0.1 * pmi_score
-        blended = 0.6 * traditional + 0.4 * macro_bias_score
+        traditional = 0.3*dxy_score + 0.2*us10y_score + 0.2*cpi_score + 0.2*fed_score + 0.1*pmi_score
+        blended = 0.6*traditional + 0.4*macro_bias_score
         return float(np.clip(blended, -1, 1))
 
     def get_extra(self):
-        """Return the extra info computed during the last score() call."""
         return getattr(self, '_extra', {})
-
-# ------------------------------------------------------------
-# Backward-Compatibility Bridge for Legacy Services
-# ------------------------------------------------------------
-async def calculate_asset_bias(asset: str) -> dict:
-    """
-    Acts as a routing bridge for legacy instances (like app/services/telegram_bot.py)
-    that look to import calculate_asset_bias as a module-level function.
-    """
-    engine = MacroEngine()
-    # Mock fallback baseline macro container
-    mock_macro = MacroData(
-        dxy=102.0, us10y=4.2, us2y=4.5, 
-        fed_funds=5.25, cpi_yoy=3.0, payrolls=180.0, pmi=49.5
-    )
-    # Run historical evaluations and populate extra maps
-    engine.score(mock_macro, asset)
-    return engine.get_extra()
