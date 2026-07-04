@@ -1,34 +1,40 @@
-name: Run Macro Bias Engine
-
+name: Daily Calibration Workflow
 on:
   schedule:
-    # Runs at 00:00 UTC every single day (7 days a week)
-    - cron: '0 0 * * *'
-  workflow_dispatch: # Allows you to trigger this manually directly from GitHub UI
+    - cron: '0 2 * * *'
+  workflow_dispatch:
 
 jobs:
-  run-engine:
+  calibrate:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout Repository Code
-        uses: actions/checkout@v4
-
-      - name: Set up Python Environment
-        uses: actions/setup-python@v5
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+        
+      - name: Initialize Runtime Environment
+        uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
-          cache: 'pip'
-
-      - name: Install System Dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Execute Bias Computations
+          python-version: '3.12'
+          
+      - name: Mount Core Libraries
+        run: pip install -r requirements.txt
+        
+      - name: Execute Walk-Forward Model Tuning Matrix
         env:
-          FRED_API_KEY: ${{ secrets.FRED_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-          GOLDAPI_KEY: ${{ secrets.GOLDAPI_KEY }}
-        run: python engine.py
+        run: |
+          python -c "
+          from app.engines.prediction_evaluation import PredictionEvaluationEngine
+          
+          assets = ['eurusd', 'gbpusd', 'audusd', 'btcusd', 'ethusd', 'us30', 'jp225']
+          for asset in assets:
+              try:
+                  model, scaler, n, cv = PredictionEvaluationEngine.walk_forward_train(asset, '1d')
+                  if model is not None:
+                      print(f'Calibration completed for asset {asset}. Samples: {n}, CV: {cv:.3f}')
+                  else:
+                      print(f'Calibration skipped for asset {asset} (insufficient data).')
+              except Exception as e:
+                  print(f'Calibration failed for asset {asset}: {e}')
+          "
