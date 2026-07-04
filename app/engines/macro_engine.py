@@ -5,7 +5,7 @@ import yfinance as yf
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-# Native SDK for Gemini integration
+# Native contemporary Google Gen AI SDK
 from google import genai 
 
 logger = logging.getLogger(__name__)
@@ -71,31 +71,44 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
     api_key = os.getenv("GEMINI_API_KEY")
     events_summary = ", ".join([f"{e['event']} (Actual: {e['actual']}, Exp: {e['forecast']})" for e in macro_events])
     
+    # Precise engineering prompt configured to enforce the 5-sentence limit stringently
     prompt = (
-        f"You are a Senior Institutional Macro Strategist analyzing {asset.upper()}.\n"
-        f"Recent Macro Outputs: {events_summary}\n"
-        f"Technical State: Live Price {technicals['live_price']}, Z-Score {technicals['z_score']:.2f}, Bias {technicals['bias']}.\n"
-        f"Provide a concise, sharp 2-sentence market inference outlining exactly what this data means "
-        f"for this asset's near-term structural direction. Do not include introductory fluff."
+        f"You are a Senior Institutional Macro Strategist analyzing the financial asset {asset.upper()}.\n"
+        f"Recent High-Impact Economic Events: {events_summary}\n"
+        f"Current Market Technical Profiles: Live Spot {technicals['live_price']}, Momentum Z-Score {technicals['z_score']:.2f}, Engine Bias Status {technicals['bias']}.\n"
+        f"Task: Write a comprehensive, high-level analysis explaining exactly what these macroeconomic milestones mean for this specific asset pair. "
+        f"Constraints: Your response MUST contain exactly 5 sentences. No more, no less. Do not use any introductory fluff or sign-offs."
     )
 
     if not api_key:
-        # Programmatic deterministic heuristic fallback if keys are missing
-        if "CPI" in events_summary and technicals['z_score'] > 0:
-            return f"Hotter CPI aggregates keep structural pressure on terminal swap horizons, reinforcing the current expansion cycle toward near-term overhead liquidity targets."
-        return f"Macro prints indicate a highly balanced structural regime. Technical order flow remains the primary short-term driver while waiting for further volume distribution."
+        # Heuristic default strings satisfying the 5-sentence layout rules
+        return (
+            f"The macroeconomic environment for {asset.upper()} remains highly dependent on shifting interest rate swap pricing expectations. "
+            f"Recent prints like consumer price calculations confirm that core inflation sticky points continue to disrupt near-term projection curves. "
+            f"Concurrently, the technical momentum profile validates that institutional accumulation is taking place within lower liquidity clusters. "
+            f"Market participants must closely observe key breakout invalidation layers before building massive trend positions. "
+            f"Until volume spikes clear out the current compressed range, systematic tracking models lean toward tactical mean reversion execution."
+        )
 
-    try:
-        # Initialize Google Gen AI Client
+    [span_1](start_span)try:
+        # Initialize Google Gen AI Client using standard env keys[span_1](end_span)
         client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
+        
+        [span_2](start_span)# Non-streaming async invocation call routed directly down the standard SDK pipeline[span_2](end_span)
+        response = await client.aio.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt
         )
         return response.text.strip()
     except Exception as e:
-        logger.error(f"Gemini API inference computation failed: {e}")
-        return f"System failed to process modern macro variables. Order flow continues to cluster around the 20 SMA pivot at {technicals['sma_20']:.4f}."
+        logger.error(f"Gemini SDK async inference computation failure: {e}")
+        return (
+            f"The asset pipeline failed to establish connection to the primary context server logic layers. "
+            f"Technical data registers indicate pricing distributions are holding steady adjacent to historical parameters. "
+            f"High-impact global economic catalysts continue to inject volatility into order books dynamically. "
+            f"Traders should exercise strict volume management policies to cushion against sudden tail-risk extensions. "
+            f"The fallback moving average value remains fixed at the {technicals['sma_20']:.4f} level."
+        )
 
 # ------------------------------------------------------------
 # 4. Core Quantitative Calculation Interface
@@ -105,6 +118,7 @@ async def calculate_asset_bias(asset: str) -> dict:
     asset_upper = asset.strip().upper()
     yf_ticker = asset_upper
     
+    # Asset translation layers
     if "USD" in asset_upper and len(asset_upper) == 6:
         yf_ticker = f"{asset_upper[:3]}={X}" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
     elif asset_upper == "JP225":
@@ -115,7 +129,7 @@ async def calculate_asset_bias(asset: str) -> dict:
         df = ticker_obj.history(period="60d")
         
         if df.empty:
-            raise ValueError(f"No history records found for symbol {yf_ticker}")
+            raise ValueError(f"No pricing historical arrays returned from provider for symbol target {yf_ticker}")
 
         live_price = float(df['Close'].iloc[-1])
         prev_close = float(df['Close'].iloc[-2])
@@ -126,7 +140,7 @@ async def calculate_asset_bias(asset: str) -> dict:
         recent_returns = df['Returns'].tail(14)
         z_score = float((recent_returns.mean() / recent_returns.std())) if recent_returns.std() != 0 else 0.0
 
-        # Assign core state profile
+        # Assign core state profile indices
         if z_score > 0.5:
             bias_key = "🟢 BULLISH"
             regime_state = "Trend Expansion (Bullish Dominance)"
@@ -145,16 +159,19 @@ async def calculate_asset_bias(asset: str) -> dict:
             "prev_close": prev_close,
             "sma_20": current_sma,
             "z_score": z_score,
-            # Dynamically picks a matching quote from the chosen dictionary subset
+            # Grabs a single random distinct quote tied to the active market bias context
             "quote": random.choice(RISK_QUOTES[bias_key]) 
         }
 
+        # Ingest news arrays and map to strings
         macro_events = await fetch_recent_macro_events(asset_upper)
         base_technicals["news"] = "\n".join([f"• {e['event']}: Expected {e['forecast']}, printed {e['actual']} ({e['impact']} Impact)" for e in macro_events])
+        
+        # Fire contextual data arrays off to Gemini 1.5 Flash
         base_technicals["macro_inference"] = await generate_ai_macro_inference(asset_upper, base_technicals, macro_events)
 
         return base_technicals
 
     except Exception as e:
-        logger.error(f"Structural error inside macro calculation matrix pipeline: {e}", exc_info=True)
+        logger.error(f"Structural execution error inside calculation runtime loops: {e}", exc_info=True)
         return {}
