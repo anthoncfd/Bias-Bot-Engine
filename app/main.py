@@ -1,10 +1,14 @@
 import os
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
-# Setup logging pattern
+# Import the configured bot application instance from your service layer
+from app.services.telegram_bot import application
+
+# Setup logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -14,25 +18,38 @@ logger = logging.getLogger("macro_engine.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Handles startup and shutdown events cleanly.
-    Put any background tasks or database connection pools here.
+    Handles non-blocking background execution loops for the Telegram engine.
     """
     logger.info("Initializing Macro Bias Engine Core Components...")
     
-    # Example: If you use python-telegram-bot application long-polling:
-    # from app.bot.telegram_client import bot_application
-    # await bot_application.initialize()
-    # await bot_application.start()
-    # logger.info("Telegram interface online.")
-    
+    # Verify token exists before firing up loops
+    if not os.getenv("TELEGRAM_TOKEN"):
+        logger.error("CRITICAL: TELEGRAM_TOKEN environment variable is missing on Render!")
+    else:
+        try:
+            logger.info("Starting Telegram Bot application context...")
+            await application.initialize()
+            await application.start()
+            
+            # Fire off the polling loop inside a non-blocking asyncio task thread
+            asyncio.create_task(application.updater.start_polling())
+            logger.info("Telegram engine successfully attached and polling active.")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram polling thread layer: {e}")
+            
     yield
     
     logger.info("Shutting down Macro Bias Engine systems...")
-    # Example clean shutdown:
-    # await bot_application.stop()
-    # await bot_application.shutdown()
+    if os.getenv("TELEGRAM_TOKEN"):
+        try:
+            await application.updater.stop()
+            await application.stop()
+            await application.shutdown()
+            logger.info("Telegram listener gracefully disconnected.")
+        except Exception as e:
+            logger.error(f"Error cleanly stopping Telegram runner: {e}")
 
-# Initialize FastAPI App
+# Initialize FastAPI Framework Routing
 app = FastAPI(
     title="Macro Bias Engine API",
     version="1.0.0",
@@ -41,36 +58,19 @@ app = FastAPI(
 
 @app.get("/")
 async def root_health_check():
-    """
-    Crucial endpoint for Render's deployment engine.
-    Returns 200 OK instantly to pass the platform's HTTP connection scan.
-    """
+    """Keeps Render port-scanner happy so deployments never time out."""
     return {
         "status": "healthy",
-        "engine": "Macro Bias Engine",
-        "timezone": "UTC"
+        "engine": "Macro Bias Engine Bot Router",
+        "timestamp": "Operational"
     }
 
-@app.get("/api/v1/health")
-async def api_health():
-    return {"status": "operational"}
-
 if __name__ == "__main__":
-    # Pull dynamic port structural value assigned by Render environment
-    # Fallback natively to 8000 for local workspace testing profiles
     port_env = os.environ.get("PORT", "8000")
-    
     try:
         bind_port = int(port_env)
     except ValueError:
-        logger.warning(f"Invalid PORT environment assignment string: '{port_env}'. Defaulting to 8000.")
         bind_port = 8000
 
-    logger.info(f"Launching ASGI application layer on host 0.0.0.0 binding to port: {bind_port}")
-    
-    uvicorn.run(
-        "app.main:app", 
-        host="0.0.0.0", 
-        port=bind_port,
-        workers=1
-    )
+    logger.info(f"Launching production server wrapper on port: {bind_port}")
+    uvicorn.run("app.main:app", host="0.0.0.0", port=bind_port, workers=1)
