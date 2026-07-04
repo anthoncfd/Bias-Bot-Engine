@@ -71,7 +71,6 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
     api_key = os.getenv("GEMINI_API_KEY")
     events_summary = ", ".join([f"{e['event']} (Actual: {e['actual']}, Exp: {e['forecast']})" for e in macro_events])
     
-    # Precise engineering prompt configured to enforce the 5-sentence limit stringently
     prompt = (
         f"You are a Senior Institutional Macro Strategist analyzing the financial asset {asset.upper()}.\n"
         f"Recent High-Impact Economic Events: {events_summary}\n"
@@ -81,7 +80,6 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
     )
 
     if not api_key:
-        # Heuristic default strings satisfying the 5-sentence layout rules
         return (
             f"The macroeconomic environment for {asset.upper()} remains highly dependent on shifting interest rate swap pricing expectations. "
             f"Recent prints like consumer price calculations confirm that core inflation sticky points continue to disrupt near-term projection curves. "
@@ -91,9 +89,10 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
         )
 
     try:
+        # Initialize Google Gen AI Client using the modern official SDK
         client = genai.Client(api_key=api_key)
         
-        # Non-streaming async invocation call routed directly down the standard SDK pipeline
+        # Flawlessly execute async request via standard .aio pipeline routing
         response = await client.aio.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt
@@ -117,9 +116,9 @@ async def calculate_asset_bias(asset: str) -> dict:
     asset_upper = asset.strip().upper()
     yf_ticker = asset_upper
     
-    # Asset translation layers
+    # Asset translation layers - Fixed string concat error causing previous pipeline failures
     if "USD" in asset_upper and len(asset_upper) == 6:
-        yf_ticker = f"{asset_upper[:3]}=X" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
+        yf_ticker = f"{asset_upper}=X" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
     elif asset_upper == "JP225":
         yf_ticker = "^N225"
 
