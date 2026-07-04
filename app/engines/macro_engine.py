@@ -1,28 +1,76 @@
 import os
 import logging
 import random
+import time
 import numpy as np
 import pandas as pd
 import requests
-import yfinance as yf
 import feedparser
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger("macro_engine.core")
 
-def get_custom_session() -> requests.Session:
+def fetch_yahoo_chart_data(asset: str) -> pd.DataFrame:
     """
-    Creates a requests session disguised with a standard browser User-Agent
-    to bypass cloud data center scraping restrictions on financial endpoints.
+    Directly targets Yahoo's core V8 chart REST API using automated browser 
+    spoofing to bypass the standard library crumb/cookie blockers on Render.
     """
-    session = requests.Session()
-    session.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
+    # Format symbol correctly for FX pairings (e.g., EURUSD=X)
+    ticker = f"{asset}=X" if not asset.endswith("=X") else asset
+    
+    # Calculate timestamps for 60 days of historical data lookback
+    end_time = int(time.time())
+    start_time = end_time - (60 * 24 * 60 * 60)
+    
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{ticker}"
+    params = {
+        "period1": start_time,
+        "period2": end_time,
+        "interval": "1d",
+        "includePrePost": "false",
+        "events": "div,splits"
+    }
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Origin": "https://finance.yahoo.com",
+        "Referer": "https://finance.yahoo.com/",
         "Connection": "keep-alive"
-    })
-    return session
+    }
+    
+    try:
+        response = requests.get(url, params=params, headers=headers, timeout=10)
+        
+        if response.status_code != 200:
+            logger.error(f"Yahoo API rejected request with HTTP status: {response.status_code}")
+            return pd.DataFrame()
+            
+        data = response.json()
+        result = data.get("chart", {}).get("result", [])
+        
+        if not result:
+            logger.error("Yahoo API returned an empty result block matrix.")
+            return pd.DataFrame()
+            
+        # Parse timestamp indices and closing data vectors from raw JSON payload
+        timestamps = result[0].get("timestamp", [])
+        indicators = result[0].get("indicators", {}).get("quote", [{}])[0]
+        closes = indicators.get("close", [])
+        
+        if not timestamps or not closes:
+            return pd.DataFrame()
+            
+        # Build clean dataframe matching analytical structures
+        df = pd.DataFrame({"Close": closes}, index=pd.to_datetime(timestamps, unit="s"))
+        # Drop entries missing data points
+        df = df.dropna()
+        return df
+        
+    except Exception as e:
+        logger.error(f"Failed direct scrap matrix execution from Yahoo Core: {e}")
+        return pd.DataFrame()
 
 def get_regime_quote(bias_state: str) -> str:
     """
@@ -63,7 +111,6 @@ def fetch_macro_news(asset: str) -> str:
     """
     try:
         feed_url = "https://www.reutersagency.com/feed/?best-topics=economy"
-        # Incorporate a timeout to keep the Telegram command snappy
         response = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
         feed = feedparser.parse(response.content)
         
@@ -96,17 +143,11 @@ async def calculate_asset_bias(asset: str) -> dict:
     try:
         logger.info(f"Executing advanced analytical matrix pipeline for: {asset}")
         
-        ticker_symbol = f"{asset}=X" if not asset.endswith("=X") else asset
-        
-        # Instantiate our custom authenticated session wrapper
-        custom_session = get_custom_session()
-        ticker = yf.Ticker(ticker_symbol, session=custom_session)
-        
-        # Pull historical daily frame data via the obfuscated session
-        df = ticker.history(period="60d", interval="1d")
+        # Pull processed dataframe from the direct chart endpoint
+        df = fetch_yahoo_chart_data(asset)
         
         if df.empty or len(df) < 22:
-            raise ValueError(f"Insufficient historical data depth returned for {ticker_symbol}")
+            raise ValueError(f"Insufficient historical data depth fetched from core charts for {asset}")
 
         df['Close'] = df['Close'].astype(float)
         
