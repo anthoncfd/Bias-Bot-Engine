@@ -62,7 +62,6 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
     REQUEST_COUNT.inc()
     start = datetime.utcnow()
     try:
-        # Utilize thread pool to prevent synchronous functions from blocking the async event loop
         price_data = await asyncio.to_thread(price_cb.call, price_service.get_price, asset)
         hist = await asyncio.to_thread(price_service.get_historical_data, asset, 60)
         price_data = DataValidationEngine.validate_price(price_data, hist)
@@ -72,6 +71,8 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
 
         macro_data, macro_ts, sent_data, news_items = await fetch_all_data(asset)
         macro_score = await asyncio.to_thread(macro_engine.score, macro_data, asset, {})
+        macro_extra = macro_engine.get_extra()  # <--- NEW: capture extra info
+
         sent_score = await asyncio.to_thread(sent_engine.score, sent_data, asset)
         news_score = await asyncio.to_thread(news_engine.score, news_items)
 
@@ -91,7 +92,8 @@ async def handle_asset_command(update: Update, context: ContextTypes.DEFAULT_TYP
             dominant_regime, macro_data, sent_data, corr_score, tech_indicators=tech_indicators, news_items=news_items,
             source_reliabilities={"Yahoo": 0.85, "FRED": 0.98, "Gemini": 0.95}, proxy_used=price_data.proxy_used,
             macro_timestamp=macro_ts.get('dxy'), news_timestamp=datetime.utcnow(), sent_timestamp=datetime.utcnow(),
-            model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0)
+            model_version=prob_result.get('model_version', MODEL_VERSION), sample_size=prob_result.get('sample_size', 0),
+            macro_extra=macro_extra  # <--- NEW: pass extra macro info
         )
         
         explanation += f"\n\n📈 *Calculated Alpha Quality:* {trade_q*100:.0f}%"
