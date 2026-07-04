@@ -90,11 +90,10 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
             f"Until volume spikes clear out the current compressed range, systematic tracking models lean toward tactical mean reversion execution."
         )
 
-    [span_1](start_span)try:
-        # Initialize Google Gen AI Client using standard env keys[span_1](end_span)
+    try:
         client = genai.Client(api_key=api_key)
         
-        [span_2](start_span)# Non-streaming async invocation call routed directly down the standard SDK pipeline[span_2](end_span)
+        # Non-streaming async invocation call routed directly down the standard SDK pipeline
         response = await client.aio.models.generate_content(
             model="gemini-1.5-flash",
             contents=prompt
@@ -120,7 +119,7 @@ async def calculate_asset_bias(asset: str) -> dict:
     
     # Asset translation layers
     if "USD" in asset_upper and len(asset_upper) == 6:
-        yf_ticker = f"{asset_upper[:3]}={X}" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
+        yf_ticker = f"{asset_upper[:3]}=X" if "BTC" not in asset_upper else f"{asset_upper[:3]}-{asset_upper[3:]}"
     elif asset_upper == "JP225":
         yf_ticker = "^N225"
 
