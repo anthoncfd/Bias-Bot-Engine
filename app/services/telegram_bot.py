@@ -5,9 +5,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-# Import the bridge routing function from your macro engine
-from app.engines.macro_engine import calculate_asset_bias
-
+# Global logger initialization
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
@@ -96,6 +94,9 @@ async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     )
 
     try:
+        # 🛡️ LAZY LOCAL IMPORT: Breaks circular import path on app boot sequence
+        from app.engines.macro_engine import calculate_asset_bias
+
         # Request quantitative dictionary slice from underlying macro calculus engine
         metrics_dict = await calculate_asset_bias(asset_input)
         
@@ -134,10 +135,10 @@ async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ------------------------------------------------------------
 # Global Application Core Initializer 
 # ------------------------------------------------------------
-token = os.getenv("TELEGRAM_BOT_TOKEN")
+token = os.getenv("TELEGRAM_TOKEN")
 if not token:
-    logger.critical("TELEGRAM_BOT_TOKEN configuration parameter missing entirely within environment variable configs.")
-    raise ValueError("Missing TELEGRAM_BOT_TOKEN environment assignment config settings values.")
+    logger.critical("TELEGRAM_TOKEN configuration parameter missing entirely within environment variable configs.")
+    raise ValueError("Missing TELEGRAM_TOKEN environment assignment config settings values.")
 
 # Build global instance infrastructure state layers mapping
 application = Application.builder().token(token).build()
