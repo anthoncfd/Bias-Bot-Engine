@@ -7,14 +7,20 @@ class ExplanationEngine:
                  macro: MacroData, sent: SentimentData, correlation: float = 0.0,
                  tech_indicators=None, news_items=None, source_reliabilities=None,
                  proxy_used=False, macro_timestamp=None, news_timestamp=None, sent_timestamp=None,
-                 model_version='unknown', sample_size=0) -> str:
+                 model_version='unknown', sample_size=0,
+                 macro_extra=None) -> str:
 
         direction = "BULLISH" if scores.composite > 0.05 else "BEARISH" if scores.composite < -0.05 else "NEUTRAL"
+        asset_label = asset.upper()
         
+        # Determine symbol padding based on type (FX vs standard asset handles)
+        is_fx = any(x in asset_label for x in ["EUR", "USD", "JPY", "GBP", "AUD", "CAD", "CHF"])
+        unit_prefix = "" if is_fx else "$"
+
         audit = ""
         if tech_indicators:
             audit += f"• Technical Matrix: {scores.tech_score:+.2f}\n"
-            audit += f"  - SMA20 Vector: ${tech_indicators.sma20:.2f}\n"
+            audit += f"  - SMA20 Vector: {unit_prefix}{tech_indicators.sma20:.4f if is_fx else '.2f'}\n"
             audit += f"  - Volatility-Adjusted Z-Score: {tech_indicators.z_score:+.2f}\n"
             audit += f"  - High-Velocity Momentum: {tech_indicators.momentum:+.2f}%\n"
         if scores.macro_score != 0:
@@ -42,10 +48,23 @@ class ExplanationEngine:
             for src, rel in source_reliabilities.items():
                 reliability_text += f"  • {src}: {rel*100:.0f}%\n"
 
+        macro_extra_text = ""
+        if macro_extra:
+            raw_conf = macro_extra.get('confidence', 50.0)
+            conf_val = float(raw_conf) if raw_conf is not None else 50.0
+            macro_extra_text += (
+                f"\n💡 *Macro Bias Summary:* `{macro_extra.get('bias', 'N/A')}`\n"
+                f"🎯 *Macro Confidence level:* `{conf_val:.1f}%`\n"
+                f"🔄 *Macro Market Regime:* `{macro_extra.get('regime', 'N/A')}`\n\n"
+                f"📰 *High-Impact Macro Wire:*\n{macro_extra.get('news', 'No high-impact macro headlines reported.')}\n\n"
+                f"🧠 _**RISK INSIGHT:**_\n"
+                f"_{macro_extra.get('quote', '')}_\n"
+            )
+
         return (
-            f"📊 *{asset.upper()} Institutional Analysis Engine V4.3*\n"
+            f"📊 *{asset_label} Institutional Analysis Engine V4.3*\n"
             f"━━━━━━━━━━━━━━━━━━━━━\n"
-            f"💵 *Spot Price:* ${price:.4f}\n"
+            f"💵 *Spot Price:* {unit_prefix}{price:.4f if is_fx else '.2f'}\n"
             f"📈 *Directional Alpha Bias:* {direction}\n"
             f"🎯 *Bullish Convergence Prob:* {prob:.1f}%\n"
             f"🔒 *Calibrated Statistical Confidence:* {conf:.0f}%\n"
@@ -60,7 +79,8 @@ class ExplanationEngine:
             f"• Composite Processing Score: {scores.composite:+.2f}\n\n"
             f"🔍 *System Factor Audit Trail:*\n{audit}\n"
             f"⏱️ *Data Layer Integrity Verification:*\n{timestamps}\n"
-            f"{reliability_text}\n"
+            f"{reliability_text}"
+            f"{macro_extra_text}\n"
             f"⚡ *Data Nodes:* Yahoo Finance / FRED / Gemini API\n"
-            f"🛡️ *Engineered by @anthonycfd*"
+            f"🛡️ *Engineered for High-Conviction Execution*"
         )
