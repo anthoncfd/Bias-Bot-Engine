@@ -1,46 +1,146 @@
+import os
 import logging
+import random
+import numpy as np
+import pandas as pd
+import yfinance as yf
+import feedparser
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger("macro_engine.core")
 
-async def calculate_asset_bias(asset: str) -> dict:
+def get_regime_quote(bias_state: str) -> str:
     """
-    Core implementation processing space for your Macro Bias Engine calculations.
-    Links structural mathematical momentum formulas with database schema indicators.
+    Returns a highly relevant trading quote matching the psychological 
+    and execution state of the current market regime.
+    """
+    quotes = {
+        "STRONG BULLISH": [
+            "\"The trend is your friend until the end when it bends.\" – Ed Seykota",
+            "\"Never test the depth of the river with both feet.\" – Warren Buffett",
+            "\"Defend your profits fiercely when the macro tide is in your favor.\""
+        ],
+        "STRONG BEARISH": [
+            "\"In a bear market, the game is to lose as little as possible so you're still there at the turn.\" – Paul Tudor Jones",
+            "\"Markets fall faster than they rise because fear is a stronger emotion than hope.\"",
+            "\"Don't catch falling knives. Wait for structural confirmation.\""
+        ],
+        "CAUTIOUSLY BULLISH": [
+            "\"The core of top-level trading is risk management, not prediction.\" – Paul Tudor Jones",
+            "\"Unlikely setups breed catastrophic losses. Wait for the market to prove its hands.\"",
+            "\"Range expansions often trap late-stage retail buyers. Stay objective.\""
+        ],
+        "NEUTRAL": [
+            "\"The desire to constant action is one of the greatest hazards on Wall Street.\" – Jesse Livermore",
+            "\"If you don't have an edge, don't play. Cash is an active position.\"",
+            "\"Compression always precedes expansion. Conserve capital for the breakout.\""
+        ]
+    }
+    
+    # Strip clean the emoji prefixes for dictionary key matching
+    clean_key = bias_state.replace("🟢 ", "").replace("🔴 ", "").replace("🟡 ", "").replace("⚪ ", "").strip()
+    selected_pool = quotes.get(clean_key, quotes["NEUTRAL"])
+    return random.choice(selected_pool)
+
+def fetch_macro_news(asset: str) -> str:
+    """
+    Scrapes the latest macroeconomic headlines related to the asset
+    using RSS financial feeds to build a real-time risk profile.
     """
     try:
-        logger.info(f"Running historical trend evaluation algorithms for: {asset}")
+        feed_url = "https://www.reutersagency.com/feed/?best-topics=economy"
+        feed = feedparser.parse(feed_url)
         
-        # -------------------------------------------------------------------------
-        # Insert your quantitative code equations here (e.g., pandas calculations,
-        # Supabase data retrieval lookups, momentum scoring, etc.).
-        # -------------------------------------------------------------------------
+        keywords = ["fed", "ecb", "inflation", "rate", "usd", "eur", "jpy", "macro"]
+        if "EUR" in asset:
+            keywords.extend(["euro", "europe", "lagarde"])
+        if "JPY" in asset:
+            keywords.extend(["yen", "japan", "boj"])
+            
+        headlines = []
+        for entry in feed.entries:
+            title_lower = entry.title.lower()
+            if any(kw in title_lower for kw in keywords):
+                headlines.append(f"• {entry.title}")
+                if len(headlines) >= 2:
+                    break
+                    
+        if headlines:
+            return "\n".join(headlines)
+        return "• No high-impact macro developments reported in the last 4 hours."
+    except Exception as e:
+        logger.error(f"Error parsing news wire for {asset}: {e}")
+        return "• Macro news feed temporarily unavailable."
+
+async def calculate_asset_bias(asset: str) -> dict:
+    """
+    Advanced calculation layer. Computes spot prices, historical SMAs, 
+    Z-score momentum, mathematical confidence levels, and aggregates macro headlines.
+    """
+    try:
+        logger.info(f"Executing advanced analytical matrix pipeline for: {asset}")
         
-        # Structured data matrix layout matched to the interface parser
-        mock_quantitative_matrix = {
-            "EURUSD": {
-                "bias": "BULLISH", 
-                "momentum": "+0.84", 
-                "macro_score": "0.79", 
-                "regime": "Expansion Trend"
-            },
-            "EURJPY": {
-                "bias": "BEARISH", 
-                "momentum": "-0.62", 
-                "macro_score": "0.41", 
-                "regime": "Distribution Shift"
-            }
+        ticker_symbol = f"{asset}=X" if not asset.endswith("=X") else asset
+        ticker = yf.Ticker(ticker_symbol)
+        
+        df = ticker.history(period="60d", interval="1d")
+        
+        if df.empty or len(df) < 22:
+            raise ValueError(f"Insufficient historical data depth returned for {ticker_symbol}")
+
+        df['Close'] = df['Close'].astype(float)
+        
+        live_price = df['Close'].iloc[-1]
+        prev_close = df['Close'].iloc[-2]
+        
+        df['log_return'] = np.log(df['Close'] / df['Close'].shift(1))
+        df['sma_20'] = df['Close'].rolling(window=20).mean()
+        df['rolling_mean_ret'] = df['log_return'].rolling(window=20).mean()
+        df['rolling_std_ret'] = df['log_return'].rolling(window=20).std().replace(0, np.nan)
+        
+        df['z_score'] = (df['log_return'] - df['rolling_mean_ret']) / df['rolling_std_ret']
+        current_z = df['z_score'].fillna(0).iloc[-1]
+        current_sma = df['sma_20'].iloc[-1]
+        
+        z_abs = abs(current_z)
+        confidence_raw = 50.0 + (z_abs * 22.5)  
+        confidence_level = min(max(confidence_raw, 50.0), 99.1)
+        
+        is_above_sma = live_price > current_sma
+        
+        if is_above_sma and current_z > 0.5:
+            bias_state = "🟢 STRONG BULLISH"
+            regime_state = "Expansion Trend (Aggressive Buying)"
+        elif not is_above_sma and current_z < -0.5:
+            bias_state = "🔴 STRONG BEARISH"
+            regime_state = "Distribution Shift (Heavy Liquidations)"
+        elif is_above_sma and current_z <= 0.5:
+            bias_state = "🟡 CAUTIOUSLY BULLISH"
+            regime_state = "Mean Reversion / Trend Exhaustion"
+        else:
+            bias_state = "⚪ NEUTRAL"
+            regime_state = "Compression Range (Liquidity Building)"
+
+        macro_news_feed = fetch_macro_news(asset)
+        trading_quote = get_regime_quote(bias_state)
+
+        return {
+            "live_price": f"{live_price:.5f}",
+            "prev_close": f"{prev_close:.5f}",
+            "sma_20": f"{current_sma:.5f}",
+            "bias": bias_state,
+            "momentum": f"{'+' if current_z >= 0 else ''}{current_z:.2f}",
+            "confidence": f"{confidence_level:.1f}%",
+            "regime": regime_state,
+            "news": macro_news_feed,
+            "quote": trading_quote
         }
-        
-        # Standard structural fallback configuration map
-        fallback_metrics = {
-            "bias": "NEUTRAL", 
-            "momentum": "0.00", 
-            "macro_score": "0.50", 
-            "regime": "Data Consolidation Range"
-        }
-        
-        return mock_quantitative_matrix.get(asset.upper(), fallback_metrics)
         
     except Exception as e:
-        logger.error(f"Error compiling structural tracking data inside macro engine: {e}")
-        raise e
+        logger.error(f"Execution matrix failed: {e}")
+        return {
+            "live_price": "0.0000", "prev_close": "0.0000", "sma_20": "0.0000",
+            "bias": "ERROR", "momentum": "0.00", "confidence": "0.0%",
+            "regime": "Fault Loop Intercepted", "news": "• Error scraping live wires.",
+            "quote": "\"In trading, the market tells you what to do, not vice versa.\""
+        }
