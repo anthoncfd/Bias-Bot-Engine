@@ -17,10 +17,12 @@ class NewsEngine:
 
     async def fetch_async(self, asset: str) -> list[NewsItem]:
         keyword_map = {
-            "xauusd": "gold", "xagusd": "silver", "eurusd": "euro",
-            "gbpusd": "pound", "audusd": "australian dollar",
-            "usdcad": "canadian dollar", "btcusd": "bitcoin",
-            "ethusd": "ethereum", "us30": "dow jones", "jp225": "nikkei"
+            "eurusd": "euro", "gbpusd": "pound", "audusd": "australian dollar",
+            "gbpjpy": "pound yen", "eurjpy": "euro yen",
+            "usdchf": "dollar swiss", "usdcad": "dollar canadian",
+            "cadchf": "canadian swiss",
+            "btcusd": "bitcoin", "ethusd": "ethereum", "bnbusd": "binance coin",
+            "us30": "dow jones", "jp225": "nikkei"
         }
         keyword = keyword_map.get(asset, asset)
         articles = await AsyncRSSFetcher.fetch_all(keyword)
@@ -52,8 +54,8 @@ class NewsEngine:
 
     def _classify_with_gemini(self, text: str, asset: str) -> dict:
         try:
-            # Optimized native structural JSON prompt via raw HTTP post to the Gemini free tier api
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={self.gemini_key}"
+            # Using the stabilized gemini-1.5-flash endpoint
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.gemini_key}"
             prompt = (
                 f"Analyze this news entry for {asset}. Respond ONLY with a valid minified JSON object "
                 f"containing keys 'direction' (-1 for bearish, 1 for bullish, 0 for neutral) and "
@@ -83,7 +85,6 @@ class NewsEngine:
         direction = 0
         confidence = 0.5
         
-        # Deep financial taxonomy extraction matrix
         bearish_signals = ['concern over slowing', 'hawkish', 'hike rates', 'slowdown', 'drop', 'fall', 'decline', 'crash', 'slump', 'contraction']
         bullish_signals = ['cut rates', 'dovish', 'surge', 'rally', 'jump', 'gain', 'rise', 'bullish', 'expansion', 'stimulus']
         
