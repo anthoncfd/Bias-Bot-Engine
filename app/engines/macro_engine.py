@@ -3,11 +3,26 @@ import logging
 import random
 import numpy as np
 import pandas as pd
+import requests
 import yfinance as yf
 import feedparser
 from bs4 import BeautifulSoup
 
 logger = logging.getLogger("macro_engine.core")
+
+def get_custom_session() -> requests.Session:
+    """
+    Creates a requests session disguised with a standard browser User-Agent
+    to bypass cloud data center scraping restrictions on financial endpoints.
+    """
+    session = requests.Session()
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "Connection": "keep-alive"
+    })
+    return session
 
 def get_regime_quote(bias_state: str) -> str:
     """
@@ -37,7 +52,6 @@ def get_regime_quote(bias_state: str) -> str:
         ]
     }
     
-    # Strip clean the emoji prefixes for dictionary key matching
     clean_key = bias_state.replace("🟢 ", "").replace("🔴 ", "").replace("🟡 ", "").replace("⚪ ", "").strip()
     selected_pool = quotes.get(clean_key, quotes["NEUTRAL"])
     return random.choice(selected_pool)
@@ -49,7 +63,9 @@ def fetch_macro_news(asset: str) -> str:
     """
     try:
         feed_url = "https://www.reutersagency.com/feed/?best-topics=economy"
-        feed = feedparser.parse(feed_url)
+        # Incorporate a timeout to keep the Telegram command snappy
+        response = requests.get(feed_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=5)
+        feed = feedparser.parse(response.content)
         
         keywords = ["fed", "ecb", "inflation", "rate", "usd", "eur", "jpy", "macro"]
         if "EUR" in asset:
@@ -81,8 +97,12 @@ async def calculate_asset_bias(asset: str) -> dict:
         logger.info(f"Executing advanced analytical matrix pipeline for: {asset}")
         
         ticker_symbol = f"{asset}=X" if not asset.endswith("=X") else asset
-        ticker = yf.Ticker(ticker_symbol)
         
+        # Instantiate our custom authenticated session wrapper
+        custom_session = get_custom_session()
+        ticker = yf.Ticker(ticker_symbol, session=custom_session)
+        
+        # Pull historical daily frame data via the obfuscated session
         df = ticker.history(period="60d", interval="1d")
         
         if df.empty or len(df) < 22:
