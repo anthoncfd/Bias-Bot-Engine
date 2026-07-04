@@ -21,7 +21,6 @@ class SentimentEngine:
         vix = self._fetch_yf_safely("^VIX", 16.5)
         oil = self._fetch_yf_safely("CL=F", 75.0)
         
-        # Robust CNN Fear & Greed parser with backup tracking formulas
         fear_greed = 50.0
         try:
             url = "https://production.dataviz.cnn.io/index/fearandgreed/current"
@@ -43,10 +42,7 @@ class SentimentEngine:
         vix_score = (20.0 - sent.vix) / 15.0
         score = 0.0
         
-        if asset in ["xauusd", "xagusd"]:
-            score += (sent.vix - 16.0) / 15.0 * 0.4
-            score += fg_score * -0.3
-        elif asset in ["us30", "jp225"]:
+        if asset in ["us30", "jp225"]:
             score += fg_score * 0.5
             score += vix_score * 0.3
         elif asset in ["btcusd", "ethusd", "bnbusd"]:
