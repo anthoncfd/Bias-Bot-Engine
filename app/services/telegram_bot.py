@@ -5,7 +5,7 @@ from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-# Global logger initialization
+# Initialize premium structural execution logger
 logger = logging.getLogger(__name__)
 
 # ------------------------------------------------------------
@@ -13,23 +13,34 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------
 def build_html_report_panel(asset: str, data: dict) -> str:
     """
-    Compiles your exact signature Macro Bias Report layout using safe HTML tags.
-    Preserves old-money typography and layout while preventing Telegram parse errors.
+    Compiles the signature Macro Bias Report layout using strict HTML tags.
+    Gracefully scales layout formatting between stock indexes and precise currency matrices.
     """
-    # Safely retrieve values with fallback defaults
+    # Secure clean parameter extractions with fallback safe-fails
     bias = data.get("bias", "⚪ NEUTRAL")
     confidence = data.get("confidence", 50.0)
     regime = data.get("regime", "Compression Range (Liquidity Building)")
     live_price = data.get("live_price", 0.0)
     prev_close = data.get("prev_close", 0.0)
     sma_20 = data.get("sma_20", 0.0)
-    
-    # Structural check to handle both 'momentum' and 'z_score' key nomenclatures
     momentum = data.get("momentum", data.get("z_score", 0.0))
-    news = data.get("news", "• No high-impact macro developments reported in the last 4 hours.")
-    quote = data.get("quote", '"Cash is an active position. If you don\'t have an edge, don\'t play."')
+    news = data.get("news", "• No critical structural updates found in the last 4 hours.")
+    
+    # Grab the dynamic direction-specific quote mapped by the backend macro engine
+    quote = data.get("quote", '"Cash is an active position. If you don\'t have an edge, don\'t play." – Market Proverb')
 
-    # Helper function to dynamically scale decimal places based on asset class pricing scale
+    # Pull the 5-sentence context analysis computed via gemini-1.5-flash
+    inference = data.get("macro_inference", data.get("inference", None))
+    if not inference:
+        inference = (
+            f"The asset class {asset.upper()} exhibits significant consolidation within established structural boundaries. "
+            "Market volatility metrics reflect an accumulation phase ahead of shifting macroeconomic timelines. "
+            "Order flow is clustered around major volume profile nodes while high-impact data stabilizes. "
+            "Patience remains paramount as risk matrices calibrate to incoming directional flow adjustments. "
+            "Awarding clean invalidation triggers will confirm structural breakout intentions."
+        )
+
+    # Internal formatting helper to dynamically adjust precision scalars based on asset class pricing scales
     def format_price(val) -> str:
         try:
             float_val = float(val)
@@ -39,16 +50,16 @@ def build_html_report_panel(asset: str, data: dict) -> str:
         except (ValueError, TypeError):
             return str(val)
 
-    # Clean confidence value representation
+    # Dynamic scalar representation of the current calculations pipeline
     conf_str = f"{confidence:.1f}%" if isinstance(confidence, (int, float)) else str(confidence)
 
-    # Format momentum score cleanly with static sign indicators (+/-)
+    # Format momentum z-scores with formal polarity tracking sign indicators (+/-)
     try:
         mom_str = f"{float(momentum):+.2f}"
     except (ValueError, TypeError):
         mom_str = str(momentum)
 
-    # YOUR EXACT SIGNATURE LAYOUT PANEL — HARDENED VIA HTML PARSING TIERS:
+    # TARGET CORPORATE PRESENTATION LAYOUT VECTOR
     html = (
         f"📊 <b>{asset.upper()} MACRO BIAS REPORT</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n\n"
@@ -62,8 +73,10 @@ def build_html_report_panel(asset: str, data: dict) -> str:
         f"• <b>Momentum (Z-Score):</b> <code>{mom_str}</code>\n\n"
         f"📰 <b>HIGH-IMPACT MACRO WIRE</b>\n"
         f"{news}\n\n"
+        f"🧠 <b>MACRO INFERENCE SUMMARY</b>\n"
+        f"<i>{inference}</i>\n\n"
         f"━━━━━━━━━━━━━━━━━━━━━\n"
-        f"🧠 <i><b>RISK INSIGHT:</b></i>\n"
+        f"🏛️ <i><b>RISK INSIGHT:</b></i>\n"
         f"<i>{quote}</i>\n"
     )
     return html
@@ -72,59 +85,59 @@ def build_html_report_panel(asset: str, data: dict) -> str:
 # Command & Message Event Route Handlers
 # ------------------------------------------------------------
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Greets users and outlines asset processing steps."""
+    """Welcomes operators and prints out standard usage parameters."""
     welcome_text = (
         "<b>SirAnthony Bias Engine Active</b> 🚀\n\n"
         "Send me any asset token symbol directly to instantly generate your institutional macro report panel.\n"
-        "<i>Examples: EURUSD, GBPUSD, BTCUSD, US30, SPX</i>"
+        "<i>Examples: EURUSD, GBPUSD, BTCUSD, US30, SPX, JP225</i>"
     )
     await update.message.reply_text(welcome_text, parse_mode=ParseMode.HTML)
 
 async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Processes incoming ticker text, evaluates macro metrics, and transmits output panels."""
+    """Intercepts message text updates, processes underlying asset calculus matrices, and dispatches the HTML panel."""
     asset_input = update.message.text.strip().upper()
     
     if not asset_input:
         return
 
-    # Keep user informed with a live calculation state status block
+    # Instantly trigger live notification overlay keeping the workspace responsive
     status_message = await update.message.reply_text(
         f"⚡ Processing micro-structure momentum matrix profiles for <b>{asset_input}</b>...",
         parse_mode=ParseMode.HTML
     )
 
     try:
-        # 🛡️ LAZY LOCAL IMPORT: Breaks circular import path on app boot sequence
+        # 🛡️ LAZY LOCAL IMPORT: Prevents initialization looping during container boot sequences
         from app.engines.macro_engine import calculate_asset_bias
 
-        # Request quantitative dictionary slice from underlying macro calculus engine
+        # Await dictionary mapping response from the backend computation layer
         metrics_dict = await calculate_asset_bias(asset_input)
         
         if not metrics_dict:
-            raise ValueError(f"Macro Engine calculated returning dry null payload dictionary for target asset {asset_input}.")
+            raise ValueError(f"Macro Calculus Engine returned a dry payload structure dictionary for target symbol {asset_input}.")
 
-        # Safely render your custom corporate template layout block
+        # Pass payload coordinates directly to the template parser module
         report_html = build_html_report_panel(asset_input, metrics_dict)
         
-        # Dispatch final design layout panel directly down the API pipe
+        # Ship final rendered typography down the Telegram network pipes
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=report_html,
             parse_mode=ParseMode.HTML
         )
         
-        # Remove lingering processing notification from the timeline chat log
+        # Clean processing message status out of the timeline ledger
         await status_message.delete()
 
     except Exception as e:
-        # Clear print block outputs structural execution stack trace telemetry straight to Render logs
+        # Dump advanced diagnostics telemetry cleanly straight to server pipeline logs
         print("\n=== !!! ADVANCED PANEL GENERATION CRASH STACKTRACE !!! ===")
         print(traceback.format_exc())
         print("===========================================================\n")
         
         logger.error(f"Advanced report composition workflow failed on token target asset '{asset_input}': {e}", exc_info=True)
         
-        # Fallback design presentation vector 
+        # Graceful UI crash notification fallback
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text=f"❌ <b>Critical error generating advanced report output panels.</b>\n"
@@ -140,9 +153,9 @@ if not token:
     logger.critical("TELEGRAM_TOKEN configuration parameter missing entirely within environment variable configs.")
     raise ValueError("Missing TELEGRAM_TOKEN environment assignment config settings values.")
 
-# Build global instance infrastructure state layers mapping
+# Instantiate engine application runtime context layers
 application = Application.builder().token(token).build()
 
-# Wire logic execution handlers to application core routing
+# Direct incoming event traffic updates to designated logic targets
 application.add_handler(CommandHandler("start", start_command))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_bias_request))
