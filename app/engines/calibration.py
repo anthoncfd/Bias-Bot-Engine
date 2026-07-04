@@ -6,7 +6,7 @@ from sklearn.model_selection import cross_val_score
 import numpy as np
 from datetime import datetime
 
-MODEL_VERSION = "v4.2.0"
+MODEL_VERSION = "v4.3.1"
 FEATURE_SET_VERSION = "v1"
 
 def get_training_data(asset: str, horizon='1d', min_samples=40):
@@ -52,13 +52,12 @@ def save_model(asset: str, horizon: str, model, scaler, n, cv_score):
     if not supabase or model is None:
         return
     try:
-        # Dynamically extract parameters from CalibratedClassifierCV structures
         if hasattr(model, 'calibrated_classifiers_') and len(model.calibrated_classifiers_) > 0:
             base_est = model.calibrated_classifiers_[0].base_estimator
             coefs = base_est.coef_.tolist()
             intercept = base_est.intercept_.tolist()
         else:
-            coefs = [[0.0] * X.shape[1]]
+            coefs = [[0.0] * scaler.mean_.shape[0]]
             intercept = [0.0]
             
         model_data = {
