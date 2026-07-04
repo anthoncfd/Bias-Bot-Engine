@@ -5,10 +5,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 import uvicorn
 
-# Import the configured bot application instance from your service layer
+# Bind the configured bot application instance from your service layer
 from app.services.telegram_bot import application
 
-# Setup logging
+# Setup structural log output configurations
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -18,24 +18,24 @@ logger = logging.getLogger("macro_engine.main")
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
-    Handles non-blocking background execution loops for the Telegram engine.
+    Handles seamless background execution loops for the Telegram engine
+    without choking the primary FastAPI web routing layer.
     """
     logger.info("Initializing Macro Bias Engine Core Components...")
     
-    # Verify token exists before firing up loops
     if not os.getenv("TELEGRAM_TOKEN"):
-        logger.error("CRITICAL: TELEGRAM_TOKEN environment variable is missing on Render!")
+        logger.error("CRITICAL ERROR: TELEGRAM_TOKEN environment variable is missing on Render configuration tabs!")
     else:
         try:
             logger.info("Starting Telegram Bot application context...")
             await application.initialize()
             await application.start()
             
-            # Fire off the polling loop inside a non-blocking asyncio task thread
+            # Spin off polling inside a non-blocking background asyncio task thread
             asyncio.create_task(application.updater.start_polling())
             logger.info("Telegram engine successfully attached and polling active.")
         except Exception as e:
-            logger.error(f"Failed to start Telegram polling thread layer: {e}")
+            logger.error(f"Failed to start Telegram polling layer: {e}")
             
     yield
     
@@ -58,7 +58,10 @@ app = FastAPI(
 
 @app.get("/")
 async def root_health_check():
-    """Keeps Render port-scanner happy so deployments never time out."""
+    """
+    Crucial endpoint for Render's deployment engine.
+    Returns 200 OK instantly to pass the platform's HTTP connection scan.
+    """
     return {
         "status": "healthy",
         "engine": "Macro Bias Engine Bot Router",
@@ -66,11 +69,14 @@ async def root_health_check():
     }
 
 if __name__ == "__main__":
+    # Pull dynamic port structural value assigned by Render environment
+    # Fallback natively to 8000 for local workspace testing profiles
     port_env = os.environ.get("PORT", "8000")
     try:
         bind_port = int(port_env)
     except ValueError:
+        logger.warning(f"Invalid PORT environment assignment string: '{port_env}'. Defaulting to 8000.")
         bind_port = 8000
 
-    logger.info(f"Launching production server wrapper on port: {bind_port}")
+    logger.info(f"Launching production server wrapper on host 0.0.0.0 binding to port: {bind_port}")
     uvicorn.run("app.main:app", host="0.0.0.0", port=bind_port, workers=1)
