@@ -65,14 +65,23 @@ async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not asset_input:
         return
 
-    status_message = await update.message.reply_text("⚡ Analyzing...", parse_mode=ParseMode.HTML)
+    status_message = await update.message.reply_text("⚡ Analyzing macro structure...", parse_mode=ParseMode.HTML)
 
     try:
+        # Await data computation from the backend engine
         metrics_dict = await calculate_asset_bias(asset_input)
+        
+        # Check if the engine completely returned an empty payload or None
         if not metrics_dict:
-            await status_message.edit_text("❌ No data found.")
+            await status_message.edit_text(
+                f"❌ <b>Engine Empty Return:</b>\n"
+                f"The calculus pipeline returned an empty payload for token target: <code>{asset_input}</code>. "
+                f"Verify if the asset ticker is properly mapped in your historical data tables or APIs.",
+                parse_mode=ParseMode.HTML
+            )
             return
 
+        # Render layout
         report_html = build_html_report_panel(asset_input, metrics_dict)
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
@@ -80,13 +89,21 @@ async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE
             parse_mode=ParseMode.HTML
         )
         await status_message.delete()
+        
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        await status_message.edit_text("❌ System error.")
+        # Extract full trace metrics to surface exactly where it broke
+        error_details = traceback.format_exc()
+        logger.error(f"Macro processing exception on {asset_input}:\n{error_details}")
+        
+        # Directly notify the operator within the chat box window for faster debugging
+        await status_message.edit_text(
+            f"❌ <b>Calculus Pipeline Exception:</b>\n"
+            f"<code>{str(e)}</code>", 
+            parse_mode=ParseMode.HTML
+        )
 
 # ------------------------------------------------------------
 # GLOBAL APPLICATION INITIALIZATION
-# This block MUST be here to resolve the ImportError
 # ------------------------------------------------------------
 token = os.getenv("TELEGRAM_TOKEN")
 if not token:
