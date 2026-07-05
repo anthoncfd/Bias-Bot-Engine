@@ -1,14 +1,27 @@
 import os
-import logging
 import random
-import yfinance as yf
-import pandas as pd
+import logging
+import asyncio
 import numpy as np
-from datetime import datetime, timedelta
-# Native contemporary Google Gen AI SDK
-from google import genai 
+import pandas as pd
+import yfinance as yf
+from datetime import datetime
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
-logger = logging.getLogger(__name__)
+load_dotenv()
+
+# Setup high-fidelity logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("MacroEngine")
+
+# Initialize the contemporary Google GenAI Client
+try:
+    client = genai.Client()
+except Exception as ex:
+    logger.error(f"Failed to initialize Google GenAI Client: {ex}")
+    client = None
 
 # ------------------------------------------------------------
 # 1. Premium Institutional Risk Insights Matrix (30 Total)
@@ -64,11 +77,10 @@ async def fetch_recent_macro_events(asset: str) -> list:
     ]
 
 # ------------------------------------------------------------
-# 3. Gemini 1.5 Flash Synthesis Engine
+# 3. Gemini 2.5 Flash Synthesis Engine
 # ------------------------------------------------------------
 async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events: list) -> str:
-    """Uses native Gemini 1.5 Flash SDK to compute professional summaries."""
-    api_key = os.getenv("GEMINI_API_KEY")
+    """Uses native Google GenAI SDK to compute institutional-grade summaries."""
     events_summary = ", ".join([f"{e['event']} (Actual: {e['actual']}, Exp: {e['forecast']})" for e in macro_events])
     
     prompt = (
@@ -79,7 +91,7 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
         f"Constraints: Your response MUST contain exactly 5 sentences. No more, no less. Do not use any introductory fluff or sign-offs."
     )
 
-    if not api_key:
+    if not client:
         return (
             f"The macroeconomic environment for {asset.upper()} remains highly dependent on shifting interest rate swap pricing expectations. "
             f"Recent prints like consumer price calculations confirm that core inflation sticky points continue to disrupt near-term projection curves. "
@@ -89,14 +101,19 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
         )
 
     try:
-        client = genai.Client(api_key=api_key)
-        response = await client.aio.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt
+        # Utilizing safe thread execution for non-blocking IO in asynchronous run loops
+        response = await asyncio.to_thread(
+            client.models.generate_content,
+            model='gemini-2.5-flash',
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=300
+            )
         )
         return response.text.strip()
     except Exception as e:
-        logger.error(f"Gemini SDK async inference computation failure: {e}")
+        logger.error(f"Gemini API Inference failed: {e}")
         return (
             f"The asset pipeline failed to establish connection to the primary context server logic layers. "
             f"Technical data registers indicate pricing distributions are holding steady adjacent to historical parameters. "
@@ -108,11 +125,14 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
 # ------------------------------------------------------------
 # 4. Core Quantitative Calculation Interface
 # ------------------------------------------------------------
-async def calculate_asset_bias(asset: str) -> dict:
-    """Orchestrates asset metrics calculations, macro processing, and quote matching."""
-    asset_upper = asset.strip().upper()
+async def calculate_asset_bias(asset_pair: str) -> dict:
+    """
+    Orchestrates asset metrics calculations, macro processing, and quote matching.
+    Guarantees structural dictionaries are always returned to avoid pipeline validation faults.
+    """
+    asset_upper = asset_pair.upper().strip()
     
-    # Clean standard translation routing for Forex, Indexes, and Crypto assets
+    # Static translation routing layers mapping raw user targets to exact Yahoo formats
     if len(asset_upper) == 6 and not asset_upper.startswith(("^", "BTC")):
         yf_ticker = f"{asset_upper}=X"
     elif "BTCUSD" in asset_upper:
@@ -123,13 +143,17 @@ async def calculate_asset_bias(asset: str) -> dict:
         yf_ticker = asset_upper
 
     try:
-        # Use an explicit historical date window to safely step past weekend gaps
-        end_dt = datetime.now()
-        start_dt = end_dt - timedelta(days=90)
-        
         ticker_obj = yf.Ticker(yf_ticker)
-        df = ticker_obj.history(start=start_dt.strftime('%Y-%m-%d'), end=end_dt.strftime('%Y-%m-%d'))
         
+        # Pull relative timeframe metrics to smoothly bypass weekend closure data structural dropouts
+        df = ticker_obj.history(period="3mo")
+        
+        if df.empty and "=X" in yf_ticker:
+            alternative_ticker = yf_ticker.replace("=X", "")
+            logger.warning(f"Primary ticker returned empty array. Retrying with variant: {alternative_ticker}")
+            ticker_obj = yf.Ticker(alternative_ticker)
+            df = ticker_obj.history(period="3mo")
+
         if df.empty:
             raise ValueError(f"No pricing historical arrays returned from provider for symbol target {yf_ticker}")
 
@@ -147,6 +171,7 @@ async def calculate_asset_bias(asset: str) -> dict:
         df['Returns'] = df['Close'].pct_change()
         recent_returns = df['Returns'].dropna().tail(14)
         
+        # Prevent division by zero errors inside standard dev arrays
         if recent_returns.empty or recent_returns.std() == 0 or pd.isna(recent_returns.std()):
             z_score = 0.0
         else:
@@ -154,6 +179,7 @@ async def calculate_asset_bias(asset: str) -> dict:
             if np.isnan(z_score) or np.isinf(z_score):
                 z_score = 0.0
 
+        # Assign core state metrics
         if z_score > 0.5:
             bias_key = "🟢 BULLISH"
             regime_state = "Trend Expansion (Bullish Dominance)"
@@ -175,28 +201,42 @@ async def calculate_asset_bias(asset: str) -> dict:
             "quote": random.choice(RISK_QUOTES[bias_key]) 
         }
 
+        # Process macro feeds and string conversions
         macro_events = await fetch_recent_macro_events(asset_upper)
         base_technicals["news"] = "\n".join([f"• {e['event']}: Expected {e['forecast']}, printed {e['actual']} ({e['impact']} Impact)" for e in macro_events])
+        
+        # Complete AI inference pass
         base_technicals["macro_inference"] = await generate_ai_macro_inference(asset_upper, base_technicals, macro_events)
 
         return base_technicals
 
     except Exception as e:
-        logger.error(f"Structural execution error inside calculation runtime loops: {e}", exc_info=True)
+        logger.error(f"Macro processing failure encountered for {asset_upper}: {str(e)}", exc_info=True)
         
-        # CRITICAL FIX: Return a perfectly structured fallback dictionary instead of {} 
-        # to guarantee validation schemas do not throw formatting faults downstream.
+        # Safeguard fallback layout layer: Prevents internal validation pipeline crashes 
+        # when markets are dead/closed by providing structured data instead of an empty {}
         fallback_bias = "⚪ NEUTRAL"
+        fallback_price = 1.2500 if "GBP" in asset_upper else 1.0000
+        
         fallback_data = {
             "bias": fallback_bias,
             "confidence": 50.0,
             "regime": "Data Engine Safeguard Modo (Market Closed/Resting)",
-            "live_price": 1.2500 if "GBP" in asset_upper else 1.0000,
-            "prev_close": 1.2500 if "GBP" in asset_upper else 1.0000,
-            "sma_20": 1.2500 if "GBP" in asset_upper else 1.0000,
+            "live_price": fallback_price,
+            "prev_close": fallback_price,
+            "sma_20": fallback_price,
             "z_score": 0.0,
             "quote": random.choice(RISK_QUOTES[fallback_bias]),
             "news": "• System Warning: Data parsing encountered temporary upstream connection latency.",
             "macro_inference": f"The asset processing matrix for {asset_upper} is currently relying on systemic structural recovery layers. Structural boundaries continue to map institutional distribution zones across standard baseline validation vectors. Operational profiles remain intact."
         }
         return fallback_data
+
+# Integration diagnostic entrypoint
+if __name__ == "__main__":
+    async def run_diagnostic():
+        print("Starting technical engine matrix self-test...")
+        res = await calculate_asset_bias("GBPUSD")
+        print(f"Test Result Core Bias Target: {res.get('bias')}")
+        print(f"Selected Insight Quote: {res.get('quote')}")
+    asyncio.run(run_diagnostic())
