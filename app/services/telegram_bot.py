@@ -61,7 +61,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text("SirAnthony Bias Engine Active 🚀")
 
 async def handle_bias_request(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    # Clean input but allow the engine to handle string variant mapping dynamically
+    # Clean up outer padding and sanitize layout slashes seamlessly
     asset_input = update.message.text.strip().replace("/", "").upper()
     if not asset_input:
         return
