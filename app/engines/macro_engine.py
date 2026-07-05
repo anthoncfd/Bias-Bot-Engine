@@ -111,9 +111,97 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
         return "Market data is currently being processed by the institutional strategy engine."
 
 # ------------------------------------------------------------
-# 4. Core Quantitative Calculation Interface (Unchanged logic)
+# 4. Core Quantitative Calculation Interface (Restored & Production-Ready)
 # ------------------------------------------------------------
 async def calculate_asset_bias(asset_pair: str) -> dict:
-    # ... [Keep your existing technical calculation logic here] ...
-    # Ensure this calls the updated functions above.
-    pass
+    """
+    Computes quantitative technical momentum, fetches macroeconomic data prints,
+    and runs a high-impact synthesis through the Gemini engine.
+    """
+    try:
+        logger.info(f"Initiating calculus pipeline for target asset: {asset_pair}")
+        
+        # 1. Adapt ticker formats for yfinance compatibility dynamically
+        yf_ticker = asset_pair.strip().upper()
+        if "USD" in yf_ticker:
+            if yf_ticker.startswith("BTC") or yf_ticker.startswith("ETH"):
+                # Crypto formatting mapping (e.g., BTCUSD -> BTC-USD)
+                yf_ticker = f"{yf_ticker[:-3]}-{yf_ticker[-3:]}"
+            else:
+                # Forex formatting mapping (e.g., EURUSD -> EURUSD=X)
+                yf_ticker = f"{yf_ticker}=X"
+
+        # 2. Ingest historical price series data from Yahoo Finance
+        ticker_obj = yf.Ticker(yf_ticker)
+        df = await asyncio.to_thread(ticker_obj.history, period="60d", interval="1d")
+        
+        if df.empty or len(df) < 20:
+            logger.warning(f"Insufficient historical data points returned for symbol: {yf_ticker}")
+            return {}
+
+        # 3. Calculate Core Technical Matrix Components
+        live_price = float(df['Close'].iloc[-1])
+        prev_close = float(df['Close'].iloc[-2])
+        
+        # Calculate Rolling 20 Simple Moving Average
+        df['SMA_20'] = df['Close'].rolling(window=20).mean()
+        sma_20 = float(df['SMA_20'].iloc[-1])
+        
+        # Calculate Momentum Z-Score (Distance from mean normalized by standard deviation)
+        rolling_std = df['Close'].rolling(window=20).std().iloc[-1]
+        z_score = (live_price - sma_20) / rolling_std if rolling_std > 0 else 0.0
+
+        # 4. Determine Structural Bias and Regime Parameters
+        if z_score > 1.0:
+            bias = "🟢 BULLISH"
+            regime = "Trend Expansion (Premium)"
+            confidence = min(50.0 + (z_score * 15), 95.0)
+        elif z_score < -1.0:
+            bias = "🔴 BEARISH"
+            regime = "Trend Expansion (Discount)"
+            confidence = min(50.0 + (abs(z_score) * 15), 95.0)
+        else:
+            bias = "⚪ NEUTRAL"
+            regime = "Compression Range (Mean Reverting)"
+            confidence = 50.0 + abs(z_score * 10)
+
+        technicals = {
+            "live_price": live_price,
+            "prev_close": prev_close,
+            "sma_20": sma_20,
+            "z_score": z_score
+        }
+
+        # 5. Concurrent Ingestion: Macro Data Feeds & Gemini Synthesis
+        macro_events = await fetch_recent_macro_events(asset_pair)
+        
+        # Run AI Synthesis and pick a random contextual quote simultaneously
+        ai_inference_task = asyncio.create_task(
+            generate_ai_macro_inference(asset_pair, technicals, macro_events)
+        )
+        
+        selected_quote = random.choice(RISK_QUOTES.get(bias, RISK_QUOTES["⚪ NEUTRAL"]))
+        
+        # Format the FRED wire output cleanly for the report template panel
+        news_lines = [f"• <b>{e['event']}:</b> <code>{e['actual']}</code> (Impact: {e['impact']})" for e in macro_events]
+        formatted_news_wire = "\n".join(news_lines)
+
+        macro_inference = await ai_inference_task
+
+        # 6. Build final pipeline payload
+        return {
+            "bias": bias,
+            "confidence": confidence,
+            "regime": regime,
+            "live_price": live_price,
+            "prev_close": prev_close,
+            "sma_20": sma_20,
+            "momentum": z_score,
+            "news": formatted_news_wire,
+            "quote": selected_quote,
+            "macro_inference": macro_inference
+        }
+
+    except Exception as pipeline_error:
+        logger.error(f"Calculus engine execution crash on {asset_pair}: {pipeline_error}", exc_info=True)
+        return {}
