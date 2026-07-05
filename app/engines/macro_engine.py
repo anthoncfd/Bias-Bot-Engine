@@ -119,24 +119,30 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
     and runs a high-impact synthesis through the Gemini engine.
     """
     try:
-        logger.info(f"Initiating calculus pipeline for target asset: {asset_pair}")
+        raw_input = asset_pair.strip().upper().replace("/", "")
+        logger.info(f"Initiating calculus pipeline for target asset: {raw_input}")
         
         # 1. Adapt ticker formats for yfinance compatibility dynamically
-        yf_ticker = asset_pair.strip().upper()
-        if "USD" in yf_ticker:
-            if yf_ticker.startswith("BTC") or yf_ticker.startswith("ETH"):
+        if "USD" in raw_input:
+            if raw_input.startswith("BTC") or raw_input.startswith("ETH"):
                 # Crypto formatting mapping (e.g., BTCUSD -> BTC-USD)
-                yf_ticker = f"{yf_ticker[:-3]}-{yf_ticker[-3:]}"
+                base = raw_input.replace("USD", "")
+                yf_ticker = f"{base}-USD"
             else:
                 # Forex formatting mapping (e.g., EURUSD -> EURUSD=X)
-                yf_ticker = f"{yf_ticker}=X"
+                yf_ticker = f"{raw_input}=X"
+        else:
+            yf_ticker = raw_input
+
+        logger.info(f"TRANSFORMATION ENGINE: Raw Input '{asset_pair}' -> Processed yfinance Ticker: '{yf_ticker}'")
 
         # 2. Ingest historical price series data from Yahoo Finance
+        # Using "3mo" instead of "60d" explicitly ensures structural rows remain active on weekends
         ticker_obj = yf.Ticker(yf_ticker)
-        df = await asyncio.to_thread(ticker_obj.history, period="60d", interval="1d")
+        df = await asyncio.to_thread(ticker_obj.history, period="3mo", interval="1d")
         
         if df.empty or len(df) < 20:
-            logger.warning(f"Insufficient historical data points returned for symbol: {yf_ticker}")
+            logger.error(f"❌ DATA REGISTRATION FAULT: Ticker '{yf_ticker}' returned an empty dataset frame.")
             return {}
 
         # 3. Calculate Core Technical Matrix Components
@@ -173,11 +179,11 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
         }
 
         # 5. Concurrent Ingestion: Macro Data Feeds & Gemini Synthesis
-        macro_events = await fetch_recent_macro_events(asset_pair)
+        macro_events = await fetch_recent_macro_events(raw_input)
         
         # Run AI Synthesis and pick a random contextual quote simultaneously
         ai_inference_task = asyncio.create_task(
-            generate_ai_macro_inference(asset_pair, technicals, macro_events)
+            generate_ai_macro_inference(raw_input, technicals, macro_events)
         )
         
         selected_quote = random.choice(RISK_QUOTES.get(bias, RISK_QUOTES["⚪ NEUTRAL"]))
