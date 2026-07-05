@@ -51,11 +51,9 @@ RISK_QUOTES = {
 # ------------------------------------------------------------
 # 2. Unified Asset Ticker Mapping (from config)
 # ------------------------------------------------------------
-# We'll import from config, but also provide a fallback dict
 try:
     from app.config import ASSET_MAP
 except ImportError:
-    # Fallback mapping if config not accessible
     ASSET_MAP = {
         "eurusd": "EURUSD=X",
         "gbpusd": "GBPUSD=X",
@@ -76,10 +74,6 @@ except ImportError:
 # 3. Robust yfinance fetcher with retries
 # ------------------------------------------------------------
 async def fetch_yf_data(ticker: str, period="3mo", retries=3) -> pd.DataFrame:
-    """
-    Fetch OHLC data from Yahoo Finance with retry logic.
-    Returns empty DataFrame if all attempts fail.
-    """
     for attempt in range(retries):
         try:
             df = await asyncio.to_thread(
@@ -93,7 +87,7 @@ async def fetch_yf_data(ticker: str, period="3mo", retries=3) -> pd.DataFrame:
             if not df.empty:
                 return df
             logger.warning(f"Attempt {attempt+1} for {ticker} returned empty, retrying...")
-            await asyncio.sleep(2 ** attempt)  # exponential backoff
+            await asyncio.sleep(2 ** attempt)
         except Exception as e:
             logger.warning(f"Attempt {attempt+1} for {ticker} failed: {e}")
             await asyncio.sleep(2 ** attempt)
@@ -148,14 +142,12 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
     Computes technicals, fetches macro data, and generates a full report.
     NEVER returns an empty dict – always returns a dict with at least a 'bias' key.
     """
-    # Clean asset name
     raw_input = asset_pair.strip().upper().replace("/", "")
     logger.info(f"Initiating pipeline for: {raw_input}")
 
-    # ---- Get correct Yahoo ticker from ASSET_MAP ----
+    # ---- Get correct Yahoo ticker ----
     yf_ticker = ASSET_MAP.get(raw_input.lower())
     if not yf_ticker:
-        # Fallback: try to infer (forex or crypto)
         if "USD" in raw_input:
             if raw_input.startswith(("BTC", "ETH", "BNB")):
                 base = raw_input.replace("USD", "")
@@ -163,28 +155,20 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
             else:
                 yf_ticker = f"{raw_input}=X"
         else:
-            yf_ticker = raw_input  # e.g., "^DJI" if directly provided
+            yf_ticker = raw_input
         logger.warning(f"Asset {raw_input} not in ASSET_MAP, using inferred ticker: {yf_ticker}")
 
     logger.info(f"Using Yahoo ticker: {yf_ticker}")
 
-    # ---- Fetch data ----
+    # ---- Fetch data with retries ----
     df = await fetch_yf_data(yf_ticker, period="3mo")
 
-    # If still empty, try alternative fallback tickers
-    if df.empty:
-        # For crypto, try USDT pair as a last resort
-        if raw_input.startswith(("BTC", "ETH", "BNB")):
-            alt_ticker = raw_input + "USDT"
-            logger.warning(f"Retrying with {alt_ticker}")
-            df = await fetch_yf_data(alt_ticker, period="3mo")
-        # For indices, fallback to Yahoo's default symbol
-        elif raw_input.startswith(("US30", "JP225")):
-            alt_map = {"US30": "^DJI", "JP225": "^N225"}
-            if raw_input in alt_map:
-                df = await fetch_yf_data(alt_map[raw_input], period="3mo")
+    # Fallback for crypto
+    if df.empty and raw_input.startswith(("BTC", "ETH", "BNB")):
+        alt_ticker = raw_input + "USDT"
+        logger.warning(f"Retrying with {alt_ticker}")
+        df = await fetch_yf_data(alt_ticker, period="3mo")
 
-    # ---- If still no data, return a dict with error info ----
     if df.empty or len(df) < 20:
         logger.error(f"❌ No data for {raw_input} (ticker: {yf_ticker})")
         return {
@@ -200,16 +184,27 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
             "macro_inference": "Unable to compute inference due to missing data."
         }
 
-    # ---- Calculate technicals ----
+    # ---- Calculate technicals (scalar safe) ----
     df['Close'] = df['Close'].astype(float)
-    live_price = float(df['Close'].iloc[-1])
-    prev_close = float(df['Close'].iloc[-2]) if len(df) > 1 else live_price
+    live_price = df['Close'].iloc[-1]          # numpy float64
+    prev_close = df['Close'].iloc[-2] if len(df) > 1 else live_price
 
     df['SMA_20'] = df['Close'].rolling(window=20).mean()
-    sma_20 = float(df['SMA_20'].iloc[-1]) if not pd.isna(df['SMA_20'].iloc[-1]) else live_price
+    sma_20 = df['SMA_20'].iloc[-1]
+    if pd.isna(sma_20):
+        sma_20 = live_price
 
     rolling_std = df['Close'].rolling(window=20).std().iloc[-1]
-    z_score = (live_price - sma_20) / rolling_std if rolling_std and rolling_std > 0 else 0.0
+    if pd.isna(rolling_std) or rolling_std == 0:
+        z_score = 0.0
+    else:
+        z_score = (live_price - sma_20) / rolling_std
+
+    # Convert to Python float for serialization
+    live_price = float(live_price)
+    prev_close = float(prev_close)
+    sma_20 = float(sma_20)
+    z_score = float(z_score)
 
     # ---- Determine bias ----
     if z_score > 1.0:
@@ -237,11 +232,9 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
     ai_inference = await generate_ai_macro_inference(raw_input, technicals, macro_events)
     selected_quote = random.choice(RISK_QUOTES.get(bias, RISK_QUOTES["⚪ NEUTRAL"]))
 
-    # Format news
     news_lines = [f"• <b>{e['event']}:</b> <code>{e['actual']}</code> (Impact: {e['impact']})" for e in macro_events]
     formatted_news = "\n".join(news_lines)
 
-    # ---- Build final payload (always returns a dict) ----
     return {
         "bias": bias,
         "confidence": confidence,
@@ -253,4 +246,4 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
         "news": formatted_news,
         "quote": selected_quote,
         "macro_inference": ai_inference
-    }
+        }
