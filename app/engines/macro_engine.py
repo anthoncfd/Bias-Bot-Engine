@@ -84,16 +84,13 @@ RISK_QUOTES = {
 # 2. Live FRED Macro Economic Ingestion Engine
 # ------------------------------------------------------------
 async def fetch_recent_macro_events(asset: str) -> list:
-    """
-    Fetches actual real-time macroeconomic percentage shifts and absolute monthly variations 
-    from the Federal Reserve, preventing raw cumulative index totals from populating the matrix.
-    """
+    """Fetches actual real-time macroeconomic percentage shifts from FRED."""
     try:
         # 1. Calculate Headline Year-over-Year Inflation (CPIAUCSL)
         cpi_series = fred.get_series('CPIAUCSL')
         cpi_yoy = ((cpi_series.iloc[-1] - cpi_series.iloc[-13]) / cpi_series.iloc[-13]) * 100
         
-        # 2. Calculate Non-Farm Payroll Month-over-Month Change in Thousands (PAYEMS)
+        # 2. Calculate Non-Farm Payroll Month-over-Month Change (PAYEMS)
         nfp_series = fred.get_series('PAYEMS')
         nfp_change = nfp_series.iloc[-1] - nfp_series.iloc[-2]
         
@@ -107,7 +104,6 @@ async def fetch_recent_macro_events(asset: str) -> list:
         ]
     except Exception as e:
         logger.error(f"FRED API Ingestion failed: {e}")
-        # Stable fallback array for runtime safety using current interest rate markers
         return [
             {"event": "US CPI (YoY)", "actual": "4.20%", "impact": "HIGH"},
             {"event": "Non-Farm Payrolls (MoM)", "actual": "+172K", "impact": "HIGH"},
@@ -132,10 +128,7 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
             client.models.generate_content,
             model='gemini-2.5-flash',
             contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2, 
-                max_output_tokens=600
-            )
+            config=types.GenerateContentConfig(temperature=0.2, max_output_tokens=600)
         )
         return response.text.strip()
     except Exception as e:
@@ -146,14 +139,11 @@ async def generate_ai_macro_inference(asset: str, technicals: dict, macro_events
 # 4. Core Quantitative Calculation Interface 
 # ------------------------------------------------------------
 async def calculate_asset_bias(asset_pair: str) -> dict:
-    """
-    Computes advanced momentum metrics and pulls exact market summaries 
-    via fast_info metadata to prevent shifted candle discrepancies.
-    """
+    """Computes advanced momentum metrics using zero-fault historical matrix frames."""
     try:
         raw_input = asset_pair.strip().upper().replace("/", "")
         
-        # 1. Structural Checker: Appends extension to all standard 6-character fx pairs
+        # 1. Structural Checker: Formats pairs for standard FX markets
         if len(raw_input) == 6 and not (raw_input.startswith("BTC") or raw_input.startswith("ETH")):
             yf_ticker = f"{raw_input}=X"
         elif (raw_input.startswith("BTC") or raw_input.startswith("ETH")) and "USD" in raw_input:
@@ -164,12 +154,7 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
         logger.info(f"Targeting Yahoo Finance ticker mapping token: {yf_ticker}")
         ticker_obj = yf.Ticker(yf_ticker)
         
-        # 2. Extract live front-end parameters directly bypassing the shifted candle indices
-        fast_info = ticker_obj.fast_info
-        live_price = float(fast_info.get("last_price") or fast_info.get("regular_market_price"))
-        prev_close = float(fast_info.get("previous_close") or fast_info.get("regular_market_previous_close"))
-        
-        # 3. Pull historical context frames solely for calculating moving distributions
+        # 2. Extract historical arrays using a reliable period frame (3mo, 1d)
         df = await asyncio.to_thread(ticker_obj.history, period="3mo", interval="1d")
         if df.empty or len(df) < 20:
             logger.error(f"❌ DATA REGISTRATION FAULT: Ticker '{yf_ticker}' returned an empty dataset frame.")
@@ -178,15 +163,20 @@ async def calculate_asset_bias(asset_pair: str) -> dict:
         if isinstance(df.columns, pd.MultiIndex):
             df.columns = [col[0] for col in df.columns]
 
+        # Convert series directly to clean floats to prevent array formatting typing exceptions
         close_series = df['Close'].astype(float)
         
-        # Determine Moving Average and Volatility Volley boundaries
+        # 3. Position-based data assignment (Eliminates the broken fast_info scraper)
+        live_price = float(close_series.iloc[-1])
+        prev_close = float(close_series.iloc[-2])
+        
+        # Determine Moving Average metrics and Standard Deviation distributions
         sma_20_series = close_series.rolling(window=20).mean()
         sma_20 = float(sma_20_series.iloc[-1])
         
         rolling_std = float(close_series.rolling(window=20).std().iloc[-1])
         
-        # Compute exact Normalized Momentum metric using live spot value
+        # Compute exact Normalized Momentum Z-score
         z_score = (live_price - sma_20) / rolling_std if rolling_std > 0 else 0.0
 
         # 4. Map Regimes based on Standard Deviation bands
