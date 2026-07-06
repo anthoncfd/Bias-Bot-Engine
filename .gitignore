@@ -1,0 +1,15 @@
+# Environments & Secrets
+venv/
+.venv/
+env/
+
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Application Logs
+logs/
+*.log
