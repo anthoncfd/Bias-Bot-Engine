@@ -2,8 +2,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
 
 class Settings(BaseSettings):
-    # Telegram Configuration
-    telegram_bot_token: str = Field(..., validation_alias="TELEGRAM_BOT_TOKEN")
+    # Fixed: Now matches your exact environment variable name (TELEGRAM_TOKEN)
+    telegram_bot_token: str = Field(..., validation_alias="TELEGRAM_TOKEN")
     
     # FastAPI Server Configuration
     app_name: str = Field("Market Intelligence Engine", validation_alias="APP_NAME")
@@ -16,10 +16,8 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", validation_alias="LOG_LEVEL")
     log_file: str = Field("logs/app.log", validation_alias="LOG_FILE")
     
-    # Modern Pydantic v2 settings management configuration
+    # Configured strictly for System Environment Variables
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore"
     )
 
