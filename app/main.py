@@ -13,11 +13,11 @@ async def warm_historical_cache_layer():
     logger.info("Starting background cache warming and validation layer...")
     service = MarketDataService()
     
-    # Using Twelve Data's correct required ticker mapping criteria symbols
+    # Swapped indices to Yahoo Finance native tickers (prefixed with ^)
     sync_symbols = [
         "EUR/USD", "GBP/USD", "GBP/JPY", "USD/CAD", 
         "USD/CHF", "AUD/USD", "EUR/JPY", "EUR/GBP", 
-        "N225", "DJI", "NDX"
+        "^N225", "^DJI", "^IXIC"
     ]
     
     for symbol in sync_symbols:
@@ -37,10 +37,9 @@ async def lifespan(app: FastAPI):
     # 2. Check if this is a manual test inside GitHub Actions
     if os.getenv("GITHUB_ACTIONS") == "true":
         logger.info("✅ GitHub Actions environment validation complete. Terminating with exit code 0.")
-        # Graceful termination out of the framework to trigger the green checkmark
         sys.exit(0)
         
-    # 3. Otherwise, proceed with normal 24/7 long-polling hosting on Render
+    # 3. Otherwise, proceed with normal 24/7 hosting on Render
     bot_task = asyncio.create_task(run_polling())
     
     yield
