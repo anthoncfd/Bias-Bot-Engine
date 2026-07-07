@@ -13,11 +13,11 @@ async def warm_historical_cache_layer():
     logger.info("Starting background cache warming and validation layer...")
     service = MarketDataService()
     
-    # We do not sync crypto because it reads dynamically off live public frameworks natively
+    # Using Twelve Data's correct required ticker mapping criteria symbols
     sync_symbols = [
         "EUR/USD", "GBP/USD", "GBP/JPY", "USD/CAD", 
         "USD/CHF", "AUD/USD", "EUR/JPY", "EUR/GBP", 
-        "NI225", "DJI", "IXIC"
+        "N225", "DJI", "NDX"
     ]
     
     for symbol in sync_symbols:
