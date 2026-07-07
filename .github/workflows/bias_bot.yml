@@ -1,14 +1,12 @@
 name: Run Bias Bot Engine
 
 on:
-  push:
-    branches: [ main ]
+  # Disables automatic runner boots on push so it doesn't conflict with Render
   workflow_dispatch: 
 
 jobs:
   run-app:
     runs-on: ubuntu-latest
-
     steps:
     - name: Checkout repository code
       uses: actions/checkout@v4
