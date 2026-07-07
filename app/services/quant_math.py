@@ -14,52 +14,46 @@ class QuantitativeMathEngine:
             if not historical_bars or len(historical_bars) < 2:
                 raise ValueError("Insufficient historical data blocks to compute return matrix.")
 
-            # 1. Isolate and reverse closes so array moves chronologically (oldest to newest)
             closes = [float(bar["close"]) for bar in historical_bars][::-1]
-            
-            # 2. Compute log returns to model volatility distributions accurately
             log_returns = np.diff(np.log(closes))
             
-            # 3. Extract baseline drift (mu) and period volatility (sigma)
             mu = np.mean(log_returns)
             sigma = np.std(log_returns)
             
-            # Guard against edge-case division-by-zero or zero-volatility calculation crashes
             if sigma == 0: 
                 sigma = 0.001
             
-            # 4. Vectorized Simulation Configuration (2,000 paths across 4 distinct intraday step intervals)
             simulations = 2000
             steps = 4 
             dt = 1.0
             
-            # Generate complete standard normal random distribution matrix (steps x simulations)
             Z = np.random.normal(0, 1, (steps, simulations))
-            
-            # Formulate GBM components
             drift_factor = (mu - 0.5 * (sigma ** 2)) * dt
             vol_factor = sigma * np.sqrt(dt)
             
-            # Allocate paths array initialized to the current live tick asset value
             price_paths = np.zeros((steps + 1, simulations))
             price_paths[0] = current_price
             
-            # Vectorized projection matrix cascade
             for t in range(1, steps + 1):
                 price_paths[t] = price_paths[t-1] * np.exp(drift_factor + vol_factor * Z[t-1])
             
-            # Isolate the final settled price row array
             final_prices = price_paths[-1]
             
-            # 5. Compile probability density profiles
             expected_value = float(np.mean(final_prices))
             prob_up = float(np.sum(final_prices > current_price) / simulations) * 100
             prob_down = 100.0 - prob_up
             
-            # 6. Optional Feature: Apply Fractional Kelly Sizing Guideline (20% Edge Sizing Variant)
-            # Edge = win_probability - lose_probability
-            edge = (prob_up / 100.0) - (prob_down / 100.0)
-            kelly_fraction = max(0.0, edge * 0.2) # Allocation cap guard rails
+            # 🧠 FIXED QUANT MATH: Calculate absolute statistical edge distance
+            # This captures the deviation delta regardless of whether it's bullish or bearish
+            edge = abs(prob_up - prob_down) / 100.0
+            
+            # Define structural activation threshold (minimum 4% delta imbalance required to trigger risk allocation)
+            # Example: 52% vs 48% = 4% edge delta (Our minimum required floor)
+            if edge >= 0.04:
+                # Apply 20% Fractional Kelly scale factor to raw edge vector
+                kelly_fraction = edge * 0.2
+            else:
+                kelly_fraction = 0.0
             
             return {
                 "expected_value": expected_value,
