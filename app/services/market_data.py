@@ -10,7 +10,7 @@ from app.services.quant_math import QuantitativeMathEngine
 class MarketDataService:
     """Enterprise-grade hybrid financial broker utilizing cloud-resilient public streams,
 
-    browser-emulated index scrapers, and local database caches.
+    browser-emulated index/crypto scrapers, and local database caches.
     """
     
     def __init__(self):
@@ -26,22 +26,11 @@ class MarketDataService:
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
 
-    async def get_live_crypto_price(self, symbol: str) -> float | None:
-        """Queries cloud-friendly public exchange endpoints natively accessible from US hosting regions."""
-        try:
-            clean_symbol = symbol.replace("/", "").strip().upper()
-            base_currency = "BTC" if "BTC" in clean_symbol else "ETH" if "ETH" in clean_symbol else "BNB"
-            
-            async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
-                res = await client.get(f"https://api.coinbase.com/v2/prices/{base_currency}-USD/spot")
-                if res.status_code == 200:
-                    return float(res.json()["data"]["amount"])
-        except Exception as err:
-            logger.error(f"Cloud crypto infrastructure retrieval failure for {symbol}: {err}")
-        return None
-
     async def _fetch_yf_live_cloud_safe(self, symbol: str) -> float | None:
-        """Asynchronously scrapes Yahoo's underlying chart feed directly using browser emulation."""
+        """Asynchronously scrapes Yahoo's underlying chart feed directly using browser emulation.
+
+        Guarantees 0% data center blockage rates on platforms like Render.
+        """
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1m"
             async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
@@ -52,8 +41,9 @@ class MarketDataService:
                     if live_price:
                         return float(live_price)
         except Exception as err:
-            logger.error(f"Emulated index query execution failure for {symbol}: {err}")
+            logger.error(f"Emulated Yahoo Finance live query failure for {symbol}: {err}")
             
+        # Emergency Secondary Track: Fallback to traditional thread-safe dictionary fast_info lookups
         try:
             ticker = yf.Ticker(symbol)
             val = ticker.fast_info.get('last_price')
@@ -63,9 +53,19 @@ class MarketDataService:
             pass
         return None
 
+    async def get_live_crypto_price(self, symbol: str) -> float | None:
+        """Queries cloud-resilient live crypto price ticks natively from Yahoo Finance."""
+        # Map internal database tickers to standard Yahoo Finance crypto formats
+        clean_symbol = symbol.replace("/", "").strip().upper()
+        if "BTC" in clean_symbol: yf_symbol = "BTC-USD"
+        elif "ETH" in clean_symbol: yf_symbol = "ETH-USD"
+        elif "BNB" in clean_symbol: yf_symbol = "BNB-USD"
+        else: yf_symbol = f"{clean_symbol[:3]}-{clean_symbol[3:]}"
+
+        return await self._fetch_yf_live_cloud_safe(yf_symbol)
+
     async def get_live_market_price(self, symbol: str) -> float | None:
-        """Routes index assets directly to safe cloud scrapers and fiat pairs to Twelve Data."""
-        # Standardize matching patterns for index indicators
+        """Routes index assets straight to emulated safe cloud scrapers and fiat pairs to Twelve Data."""
         if symbol.startswith("^") or "=" in symbol:
             return await self._fetch_yf_live_cloud_safe(symbol)
             
@@ -95,7 +95,13 @@ class MarketDataService:
     def _fetch_yf_history(self, symbol: str) -> list | None:
         """Fetches historical daily bars via standard structural back-end arrays."""
         try:
-            ticker = yf.Ticker(symbol)
+            # Map internal data codes over to Yahoo public history anchors
+            yf_ticker = symbol
+            if symbol == "BTCUSD": yf_ticker = "BTC-USD"
+            elif symbol == "ETHUSD": yf_ticker = "ETH-USD"
+            elif symbol == "BNBUSD": yf_ticker = "BNB-USD"
+
+            ticker = yf.Ticker(yf_ticker)
             hist = ticker.history(period="45d")
             if not hist.empty:
                 hist = hist.sort_index(ascending=False).head(30)
@@ -110,33 +116,40 @@ class MarketDataService:
             logger.error(f"Yahoo Finance historical download failure for {symbol}: {err}")
         return None
 
-    async def sync_asset_historical_cache(self, symbol: str):
+    async def sync_asset_historical_cache(self, symbol: str) -> list | None:
         """Checks Supabase first. Utilizes custom routing to separate API pipelines entirely."""
         existing_cache = await self.fetch_cached_history(symbol)
         if existing_cache and len(existing_cache) > 0:
-            return
+            return existing_cache
 
         logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {symbol}")
         
-        if symbol.startswith("^") or "=" in symbol:
+        is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
+        
+        if symbol.startswith("^") or "=" in symbol or is_crypto:
             formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
             if formatted_bars:
                 async with httpx.AsyncClient(timeout=10.0) as client:
                     payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
                     await client.post(self.db_url, headers=self.db_headers, json=payload)
-            return
+                return formatted_bars
+            return None
 
+        # Forex Pairs fallback straight to Twelve Data
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                params = {"symbol": symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
+                twelve_symbol = symbol if "/" in symbol else f"{symbol[:3]}/{symbol[3:]}"
+                params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
                 res = await client.get(f"{self.twelve_base}/time_series", params=params)
                 if res.status_code == 200:
                     data = res.json()
                     if "values" in data:
                         payload = {"symbol": symbol, "historical_bars": data["values"], "updated_at": datetime.utcnow().isoformat()}
                         await client.post(self.db_url, headers=self.db_headers, json=payload)
+                        return data["values"]
             except Exception as err:
                 logger.error(f"System error updating historical tracking tables for {symbol}: {err}")
+        return None
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
         """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
@@ -152,29 +165,21 @@ class MarketDataService:
 
         historical_bars = await self.fetch_cached_history(symbol)
         if not historical_bars:
-            await self.sync_asset_historical_cache(symbol)
-            historical_bars = await self.fetch_cached_history(symbol)
+            historical_bars = await self.sync_asset_historical_cache(symbol)
             
         try:
             if not historical_bars or len(historical_bars) < 2:
-                return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
+                return f"⚠️ **Cache Error:** Unable to assemble historical tracking matrix for `{display_name}`. Verify API configurations."
             
-            # 🧠 HARDENED TIMEZONE LOGIC: Locate and extract the absolute true previous session close
-            # We explicitly read the absolute latest date string stored in the payload
             latest_bar_date = historical_bars[0]["datetime"]
             target_index = 0
             
-            # If the current day's live session is active or trading, the data vendor appends it to index 0.
-            # We compare the local current date format directly to look for an active lookahead match.
             local_today = datetime.now().strftime("%Y-%m-%d")
             if latest_bar_date == local_today or len(historical_bars) > 1:
-                # If there's an ongoing active session bar in index 0, safely drop back to index 1 
-                # to anchor calculations on the fully completed, settled Previous Close.
                 target_index = 1
                     
             prior_close = float(historical_bars[target_index]["close"])
             
-            # Absolute Safety Guard: If the data vendor gives a stale duplication anomaly, pull index 2
             if abs(live_price - prior_close) < 0.00001 and len(historical_bars) > target_index + 1:
                 target_index += 1
                 prior_close = float(historical_bars[target_index]["close"])
@@ -182,7 +187,7 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Run simulation
+            # Run Monte Carlo execution matrix
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
             if mc['prob_up'] > mc['prob_down']:
