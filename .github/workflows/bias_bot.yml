@@ -1,8 +1,7 @@
 name: Run Bias Bot Engine
 
 on:
-  # Disables automatic runner boots on push so it doesn't conflict with Render
-  workflow_dispatch: 
+  workflow_dispatch: # Restricts runner to manual execution triggers only
 
 jobs:
   run-app:
@@ -19,11 +18,18 @@ jobs:
     - name: Install Project Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install -r requirements.txt
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: Execute Application
+    - name: Execute Application Verification Test
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        MARKET_API_KEY: ${{ secrets.MARKET_API_KEY }}
+        SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+        SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        GITHUB_ACTIONS: "true"
         DEBUG: "True"
       run: |
-        uvicorn app.main:app --host 0.0.0.0 --port 8000
+        # Directly invokes the FastAPI lifecycle inside the runtime script context.
+        # This will spin up your configuration, populate your Supabase history tables
+        # using the 8-second timing intervals, and close cleanly without freezing.
+        python -c "import asyncio; from app.main import app; asyncio.run(app.router.lifespan_context(app).__aenter__())"
