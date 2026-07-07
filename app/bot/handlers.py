@@ -38,10 +38,10 @@ async def audusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): aw
 async def eurjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "EUR/JPY", "EURJPY")
 async def eurgbp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "EUR/GBP", "EURGBP")
 
-# Indices Handlers Mappings
-async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "NI225", "JP225 (Nikkei)")
-async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):   await process_and_send_report(update, "DJI", "US30 (Dow Jones)")
-async def us100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "IXIC", "US100 (Nasdaq)")
+# Indices Handlers Mappings (Mapped precisely to Yahoo Finance native tickers)
+async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "^N225", "JP225 (Nikkei)")
+async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):   await process_and_send_report(update, "^DJI", "US30 (Dow Jones)")
+async def us100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "^IXIC", "US100 (Nasdaq)")
 
 # Crypto Handlers Mappings
 async def btcusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "BTCUSD", "BTCUSD")
