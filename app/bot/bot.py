@@ -5,42 +5,40 @@ from app.bot import handlers
 from app.logger import logger
 
 def create_bot() -> Application:
+    """Enterprise configuration factory that builds the python-telegram-bot application state
+
+    and binds matching controller routers precisely.
+    """
+    # Initialize the core PTB framework engine using the configured Telegram bot token
     application = Application.builder().token(settings.telegram_bot_token).build()
     
-    # Corrected handler function pointers to match handlers.py syntax definitions exactly
+    # ⚙️ GLOBAL UTILITY COMMAND ROUTES
     application.add_handler(CommandHandler("start", handlers.start_handler))
     
-    # Forex Commands Mounts
+    # 💱 FOREX TELEMETRY HANDLER ROUTES
     application.add_handler(CommandHandler("eurusd", handlers.eurusd_handler))
     application.add_handler(CommandHandler("gbpusd", handlers.gbpusd_handler))
     application.add_handler(CommandHandler("gbpjpy", handlers.gbpjpy_handler))
     
-    # Indices Commands Mounts
-    application.add_handler(CommandHandler("jp225", handlers.jp225_handler))
+    # 📈 FUTURES & CFD STOCK INDEX HANDLER ROUTES
     application.add_handler(CommandHandler("us30", handlers.us30_handler))
+    application.add_handler(CommandHandler("jp225", handlers.jp225_handler))
     
-    # Crypto Commands Mounts
+    # 🪙 CRYPTOCURRENCY MULTI-VECTORS SPOT HANDLER ROUTES
     application.add_handler(CommandHandler("btcusd", handlers.btcusd_handler))
     application.add_handler(CommandHandler("ethusd", handlers.ethusd_handler))
     application.add_handler(CommandHandler("bnbusd", handlers.bnbusd_handler))
     
-    logger.info("Telegram engine application routes initialized successfully.")
+    logger.info("🤖 Telegram systematic routing handlers bound to execution context successfully.")
     return application
 
-async def run_polling():
-    app = create_bot()
-    logger.info("Initializing background bot operational threads...")
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    try:
-        while True:
-            await asyncio.sleep(3600)
-    except asyncio.CancelledError:
-        logger.info("Bot execution context received system thread cancellation.")
-    finally:
-        if app.updater and app.updater.running:
-            await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
-        logger.info("Ecosystem internal bot engines cleanly shut down.")
+if __name__ == "__main__":
+    # NATIVE ISOLATED BACKEND RUNNER RUN TRACK:
+    # This block allows you to manually run the bot as a pure, standalone console script 
+    # if you ever decide to isolate it completely away from the FastAPI web framework.
+    bot_instance = create_bot()
+    logger.info("🚀 Launching standalone background long-polling engine layer...")
+    
+    # drop_pending_updates=True guarantees that the bot instantly drops the backlog
+    # of messages sent while it was offline, preventing an endless queue flooding loop.
+    bot_instance.run_polling(drop_pending_updates=True)
