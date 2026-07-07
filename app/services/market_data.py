@@ -1,73 +1,132 @@
-from app.services.base_client import BaseAsyncClient
+import httpx
+from datetime import datetime
 from app.config import settings
 from app.logger import logger
 
-class MarketDataService(BaseAsyncClient):
-    """Direct targeting financial data fetching mechanism mapping individual asset classes."""
+class MarketDataService:
+    """Enterprise-grade hybrid financial broker utilizing local DB caches and public streams."""
     
     def __init__(self):
-        super().__init__(
-            base_url="https://api.twelvedata.com", 
-            default_params={"apikey": settings.market_api_key}
-        )
+        self.twelve_base = "https://api.twelvedata.com"
+        self.binance_base = "https://api.binance.com/api/v3"
+        # Direct async headers targeting Supabase REST API
+        self.db_headers = {
+            "apikey": settings.supabase_key,
+            "Authorization": f"Bearer {settings.supabase_key}",
+            "Content-Type": "application/json",
+            "Prefer": "resolution=merge-duplicates"
+        }
+        self.db_url = f"{settings.supabase_url}/rest/v1/market_history"
+
+    async def get_live_crypto_price(self, symbol: str) -> float | None:
+        """Queries uncapped public exchange endpoints. Consumes 0 Twelve Data credits."""
+        binance_symbol = f"{symbol.replace('/', '').upper()}T" if not symbol.endswith("USDT") else symbol
+        if binance_symbol == "BNBUSDT": binance_symbol = "BNBUSDT"
+        
+        async with httpx.AsyncClient() as client:
+            try:
+                res = await client.get(f"{self.binance_base}/ticker/price", params={"symbol": binance_symbol})
+                if res.status_code == 200:
+                    return float(res.json()["price"])
+            except Exception as err:
+                logger.error(f"Failed pulling public crypto matrix feed for {symbol}: {err}")
+            return None
+
+    async def get_live_market_price(self, symbol: str) -> float | None:
+        """Fetches lightweight current tick value only. Minimal payload fingerprint."""
+        async with httpx.AsyncClient() as client:
+            try:
+                res = await client.get(f"{self.twelve_base}/price", params={"symbol": symbol, "apikey": settings.market_api_key})
+                if res.status_code == 200:
+                    data = res.json()
+                    if "price" in data:
+                        return float(data["price"])
+            except Exception as err:
+                logger.error(f"Upstream live pricing retrieval exception on asset {symbol}: {err}")
+            return None
+
+    async def fetch_cached_history(self, symbol: str) -> list | None:
+        """Retrieves 30-day structural daily close profiles from Supabase local cache."""
+        async with httpx.AsyncClient() as client:
+            try:
+                url = f"{self.db_url}?symbol=eq.{symbol}&select=historical_bars"
+                res = await client.get(url, headers=self.db_headers)
+                if res.status_code == 200 and res.json():
+                    return res.json()[0]["historical_bars"]
+            except Exception as err:
+                logger.error(f"Local Supabase data synchronization read breakdown on {symbol}: {err}")
+            return None
+
+    async def sync_asset_historical_cache(self, symbol: str):
+        """Pulls comprehensive daily arrays and locks them into local storage. Run on scheduler."""
+        logger.info(f"Synchronizing 30-day historical cache layer for target: {symbol}")
+        async with httpx.AsyncClient() as client:
+            try:
+                params = {"symbol": symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
+                res = await client.get(f"{self.twelve_base}/time_series", params=params)
+                if res.status_code == 200:
+                    data = res.json()
+                    if "values" in data:
+                        payload = {"symbol": symbol, "historical_bars": data["values"], "updated_at": datetime.utcnow().isoformat()}
+                        save_res = await client.post(self.db_url, headers=self.db_headers, json=payload)
+                        if save_res.status_code in [200, 201]:
+                            logger.info(f"Successfully cached 30 historical sessions for {symbol} into Supabase.")
+                            return
+                logger.error(f"Upstream refusal compiling daily matrix array historical records for {symbol}")
+            except Exception as err:
+                logger.error(f"System error updating historical tracking tables for {symbol}: {err}")
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
-        """Fetches market arrays and dynamically builds a complete operational report based on prior close."""
-        logger.info(f"Asynchronously calculating target reporting vectors for: {symbol}")
+        """Combines local historical boundaries with live single pricing nodes for structural analysis."""
+        is_crypto = symbol.replace("/", "") in ["BTCUSD", "ETHUSD", "BNBUSD"]
         
-        data = await self._get("time_series", params={
-            "symbol": symbol,
-            "interval": "1day",
-            "outputsize": "2"
-        })
+        # 1. Fetch current price from correct source
+        if is_crypto:
+            live_price = await self.get_live_crypto_price(symbol)
+        else:
+            live_price = await self.get_live_market_price(symbol)
+            
+        if not live_price:
+            return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
+
+        # 2. Extract Prior Session Close (Crypto resolves live or via cache; FX uses strict prior complete day close)
+        historical_bars = await self.fetch_cached_history(symbol)
         
-        if not data or "values" not in data:
-            logger.error(f"Upstream API mapping structure failed or refused arrays for: {symbol}")
-            return f"⚠️ **Data Fetch Error:** Unable to retrieve live calculation streams for `{display_name}` right now."
+        if not historical_bars:
+            # Automatic fallback: if cache is empty, run a quick live sync
+            await self.sync_asset_historical_cache(symbol)
+            historical_bars = await self.fetch_cached_history(symbol)
             
         try:
-            time_series = data["values"]
-            live_price = float(time_series[0]["close"])
+            # If historical profile is fully absent, handle error gracefully
+            if not historical_bars:
+                return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
+                
+            prior_close = float(historical_bars[0]["close"])
             
-            # CORE RULE COMPLIANCE: Calculate data strictly off the preceding trading day close
-            prior_close = float(time_series[1]["close"])
-            
+            # Mathematical engine computations pinned exactly to prior session boundary
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Automated classification layout optimization mapping precision metrics
             is_jpy = "JPY" in symbol or "JP225" in display_name
-            is_forex = "/" in symbol
-            is_crypto = "BTC" in symbol or "ETH" in symbol or "BNB" in symbol
-            
-            if is_forex and not is_jpy:
-                val_fmt = f"{live_price:.5f}"
-                cls_fmt = f"{prior_close:.5f}"
-                chg_fmt = f"{net_change:+.5f}"
-            elif is_crypto or "US30" in display_name or "US100" in display_name or is_jpy:
-                val_fmt = f"{live_price:,.2f}"
-                cls_fmt = f"{prior_close:,.2f}"
-                chg_fmt = f"{net_change:+,.2f}"
+            if "/" in symbol and not is_jpy:
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
             else:
-                val_fmt = f"{live_price:.2f}"
-                cls_fmt = f"{prior_close:.2f}"
-                chg_fmt = f"{net_change:+.2f}"
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
                 
             direction_icon = "🟢 BULLISH BIAS" if change_pct >= 0 else "🔴 BEARISH BIAS"
             trend_arrow = "📈" if change_pct >= 0 else "📉"
             
-            report = (
-                f"{trend_arrow} **{display_name} INTELLIGENCE METRICS**\n"
+            return (
+                f"{trend_arrow} **{display_name} METRICS**\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"• **Current Market Price:** `{val_fmt}`\n"
+                f"• **Current Price:** `{val_fmt}`\n"
                 f"• **Prior Session Close:** `{cls_fmt}`\n"
-                f"• **Net Deviation Vector:** `{chg_fmt}`\n"
-                f"• **Percentage Variance:** `{change_pct:+.2f}%`\n"
+                f"• **Net Deviation:** `{chg_fmt}`\n"
+                f"• **Percentage Shift:** `{change_pct:+.2f}%`\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
-                f"📊 **Engine Core Bias:** `{direction_icon}`"
+                f"📊 **Engine Bias:** `{direction_icon}`"
             )
-            return report
-            
-        except (KeyError, IndexError, ValueError) as err:
-            logger.critical(f"Data payload corruption or transformation anomaly on {symbol}: {err}")
-            return f"❌ **Processing Error:** Structural schema failure while parsing `{display_name}` feeds."
+        except Exception as err:
+            logger.critical(f"Schema compilation exception parsing metrics block for {symbol}: {err}")
+            return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
