@@ -1,13 +1,14 @@
 import httpx
 import asyncio
 import yfinance as yf
+import numpy as np
 from datetime import datetime
 from app.config import settings
 from app.logger import logger
-from app.services.quant_math import QuantitativeMathEngine  # 🧠 Clean Math Coupling
+from app.services.quant_math import QuantitativeMathEngine
 
 class MarketDataService:
-    """Enterprise-grade hybrid financial broker specializing strictly in raw data ingestion and caching."""
+    """Institutional-grade financial broker utilizing explicit routing boundaries and zero-fail fallbacks."""
     
     def __init__(self):
         self.twelve_base = "https://api.twelvedata.com"
@@ -21,52 +22,71 @@ class MarketDataService:
         self.db_url = f"{settings.supabase_url}/rest/v1/market_history"
 
     async def get_live_crypto_price(self, symbol: str) -> float | None:
-        """Queries uncapped public exchange endpoints with strict regular expression conversion formatting."""
+        """Queries uncapped public Binance endpoints with strict explicit fallback mappings."""
         try:
-            clean_symbol = symbol.replace("/", "").strip().upper()
-            if clean_symbol.endswith("USD") and not clean_symbol.endswith("USDT"):
-                binance_symbol = clean_symbol.replace("USD", "USDT")
-            elif not clean_symbol.endswith("USDT"):
-                binance_symbol = f"{clean_symbol}USDT"
-            else:
-                binance_symbol = clean_symbol
+            # Explicit String Mapping Matrix - Completely removes automated string parsing risks
+            mapping = {
+                "BTCUSD": "BTCUSDT",
+                "ETHUSD": "ETHUSDT",
+                "BNBUSD": "BNBUSDT",
+                "BTC/USD": "BTCUSDT",
+                "ETH/USD": "ETHUSDT",
+                "BNB/USD": "BNBUSDT"
+            }
+            
+            clean_symbol = symbol.strip().upper()
+            binance_symbol = mapping.get(clean_symbol, f"{clean_symbol.replace('/', '')}USDT")
 
-            async with httpx.AsyncClient(timeout=10.0) as client:
+            # Enforce clear, explicit string checks
+            if binance_symbol == "BTCUSDUSDT": binance_symbol = "BTCUSDT"
+            if binance_symbol == "ETHUSDUSDT": binance_symbol = "ETHUSDT"
+            if binance_symbol == "BNBUSDUSDT": binance_symbol = "BNBUSDT"
+
+            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
                 res = await client.get(f"{self.binance_base}/ticker/price", params={"symbol": binance_symbol})
                 if res.status_code == 200:
                     return float(res.json()["price"])
+                
+                # Internal Failover Path: If Binance encounters a geo-restriction, leverage alternative public stream
+                alt_res = await client.get(f"https://api.coingecko.com/api/v3/simple/price", params={
+                    "ids": "bitcoin" if "BTC" in binance_symbol else "ethereum" if "ETH" in binance_symbol else "binancecoin",
+                    "vs_currencies": "usd"
+                })
+                if alt_res.status_code == 200:
+                    key = "bitcoin" if "BTC" in binance_symbol else "ethereum" if "ETH" in binance_symbol else "binancecoin"
+                    return float(alt_res.json()[key]["usd"])
+
         except Exception as err:
             logger.error(f"Failed pulling public crypto matrix feed for {symbol}: {err}")
         return None
 
     def _fetch_yf_live(self, symbol: str) -> float | None:
-        """Synchronous helper with multi-layered fallback running inside an isolated worker thread."""
+        """Synchronous isolated helper with strict thread-safe download parameters."""
+        try:
+            # Use direct network downloading instead of accessing ticker dictionary variables
+            data = yf.download(tickers=symbol, period="1d", interval="1m", progress=False, verbose=False)
+            if not data.empty and 'Close' in data.columns:
+                # Target the absolute latest live 1-minute candle tick price node
+                return float(data['Close'].iloc[-1])
+        except Exception as err:
+            logger.error(f"Yahoo Finance live download network execution failure for {symbol}: {err}")
+        
+        # Emergency Index Recovery Track: Attempt standard fast_info parsing if the downloader drops
         try:
             ticker = yf.Ticker(symbol)
-            try:
-                live_price = ticker.fast_info.get('last_price')
-                if live_price is not None and live_price > 0:
-                    return float(live_price)
-            except Exception:
-                pass
-
-            todays_data = ticker.history(period="1d")
-            if not todays_data.empty and 'Close' in todays_data.columns:
-                return float(todays_data['Close'].iloc[-1])
-                
-            broader_data = ticker.history(period="5d")
-            if not broader_data.empty and 'Close' in broader_data.columns:
-                return float(broader_data['Close'].iloc[-1])
-        except Exception as err:
-            logger.error(f"Yahoo Finance live price extraction failure for {symbol}: {err}")
+            val = ticker.fast_info.get('last_price')
+            if val is not None and val > 0:
+                return float(val)
+        except Exception:
+            pass
         return None
 
     async def get_live_market_price(self, symbol: str) -> float | None:
-        """Routes stock indices to Yahoo Finance and fiat pairs to Twelve Data."""
+        """Routes index assets directly to Yahoo Finance threads and fiat pairs to Twelve Data."""
         if symbol.startswith("^"):
             return await asyncio.to_thread(self._fetch_yf_live, symbol)
             
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
             try:
                 res = await client.get(f"{self.twelve_base}/price", params={"symbol": symbol, "apikey": settings.market_api_key})
                 if res.status_code == 200:
@@ -79,7 +99,7 @@ class MarketDataService:
 
     async def fetch_cached_history(self, symbol: str) -> list | None:
         """Retrieves 30-day structural daily close profiles from Supabase local cache."""
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             try:
                 url = f"{self.db_url}?symbol=eq.{symbol}&select=historical_bars"
                 res = await client.get(url, headers=self.db_headers)
@@ -118,12 +138,12 @@ class MarketDataService:
         if symbol.startswith("^"):
             formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
             if formatted_bars:
-                async with httpx.AsyncClient(timeout=10.0) as client:
+                async with httpx.AsyncClient(timeout=15.0) as client:
                     payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
                     await client.post(self.db_url, headers=self.db_headers, json=payload)
             return
 
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=15.0) as client:
             try:
                 params = {"symbol": symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
                 res = await client.get(f"{self.twelve_base}/time_series", params=params)
@@ -167,7 +187,7 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # 📊 CALL ISOLATED MATH ENGINE LAYER (Decoupled, zero database overhead)
+            # Call our isolated math engine layer
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
             is_index_or_jpy = "JPY" in symbol or symbol.startswith("^")
