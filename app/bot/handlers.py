@@ -40,15 +40,35 @@ async def process_and_send_report(update: Update, symbol: str, display_name: str
 
 async def eurusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes real-time deviations and Monte Carlo drift vectors for EUR/USD."""
-    await process_and_send_report(update, "EUR/USD", "EURUSD")
+    await process_and_send_report(update, "EURUSD", "EURUSD")
 
 async def gbpusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes real-time deviations and Monte Carlo drift vectors for GBP/USD."""
-    await process_and_send_report(update, "GBP/USD", "GBPUSD")
+    await process_and_send_report(update, "GBPUSD", "GBPUSD")
 
 async def gbpjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for GBP/JPY."""
-    await process_and_send_report(update, "GBP/JPY", "GBPJPY")
+    """Processes real-time deviations and Monte Carlo drift vectors for British Pound vs JPY."""
+    await process_and_send_report(update, "GBPJPY", "GBPJPY")
+
+async def usdcad_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for US Dollar vs Canadian Dollar."""
+    await process_and_send_report(update, "USDCAD", "USDCAD")
+
+async def usdchf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for US Dollar vs Swiss Franc."""
+    await process_and_send_report(update, "USDCHF", "USDCHF")
+
+async def audusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for Australian Dollar vs US Dollar."""
+    await process_and_send_report(update, "AUDUSD", "AUDUSD")
+
+async def eurjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for Euro vs Japanese Yen."""
+    await process_and_send_report(update, "EURJPY", "EURJPY")
+
+async def eurgbp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for Euro vs British Pound."""
+    await process_and_send_report(update, "EURGBP", "EURGBP")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 📈 STOCK INDEX FUTURES ROUTING HANDLERS
@@ -56,18 +76,15 @@ async def gbpjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Processes real-time deviations and Monte Carlo drift vectors for Dow Jones Mini Futures."""
-    # Matches mini futures 'YM=F' to align perfectly with retail CFD values (OANDA/Forex.com)
     await process_and_send_report(update, "YM=F", "US30 (Dow Jones)")
 
-async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Nikkei 225 USD Futures."""
-    # Matches highly liquid CME Nikkei futures 'NKD=F' to align with broker data streams
-    await process_and_send_report(update, "NKD=F", "JP225 (Nikkei)")
-
 async def nas100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Nasdaq 100 Futures."""
-    # Maps directly to the high-volume E-mini Nasdaq 100 futures tracking anchor
+    """Processes real-time deviations and Monte Carlo drift vectors for Nasdaq 100 E-mini Futures."""
     await process_and_send_report(update, "NQ=F", "NAS100 (Nasdaq)")
+
+async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Processes real-time deviations and Monte Carlo drift vectors for Nikkei 225 Futures Mirror."""
+    await process_and_send_report(update, "NKD=F", "JP225 (Nikkei)")
 
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # 🪙 CRYPTOCURRENCY SPOT ROUTING HANDLERS
@@ -98,17 +115,15 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Query the commands below to pull live deviations alongside 2,000-path "
         "vectorized Geometric Brownian Motion session estimates.\n\n"
         "💱 **Forex Command Matrix**\n"
-        " └ /eurusd - Euro vs US Dollar\n"
-        " └ /gbpusd - British Pound vs US Dollar\n"
-        " └ /gbpjpy - British Pound vs Japanese Yen\n\n"
+        " └ /eurusd, /gbpusd, /gbpjpy\n"
+        " └ /usdcad, /usdchf, /audusd\n"
+        " └ /eurjpy, /eurgbp\n\n"
         "📈 **Indices Command Matrix**\n"
-        " └ /us30 - Dow Jones Industrial Mini Futures\n"
-        " └ /nas100 - Nasdaq 100 E-mini Futures\n"
-        " └ /jp225 - Nikkei 225 Futures Mirror\n\n"
+        " └ /us30 - Dow Jones Mini Futures\n"
+        " └ /nas100 - Nasdaq 100 E-mini\n"
+        " └ /jp225 - Nikkei 225 Mirror\n\n"
         "🪙 **Crypto Command Matrix**\n"
-        " └ /btcusd - Bitcoin Spot Index\n"
-        " └ /ethusd - Ethereum Spot Index\n"
-        " └ /bnbusd - Binance Coin Spot Index\n"
+        " └ /btcusd, /ethusd, /bnbusd\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "💡 *Systems status: Operating with active Supabase local database caching layer.*"
     )
