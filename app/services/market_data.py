@@ -68,7 +68,9 @@ class MarketDataService:
             
         async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
             try:
-                res = await client.get(f"{self.twelve_base}/price", params={"symbol": symbol, "apikey": settings.market_api_key})
+                # Twelve Data price parsing requires standard ticker configurations
+                clean_symbol = symbol.replace("/", "").strip().upper()
+                res = await client.get(f"{self.twelve_base}/price", params={"symbol": clean_symbol, "apikey": settings.market_api_key})
                 if res.status_code == 200:
                     data = res.json()
                     if "price" in data:
@@ -81,7 +83,9 @@ class MarketDataService:
         """Retrieves 30-day structural daily close profiles from Supabase local cache."""
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                url = f"{self.db_url}?symbol=eq.{symbol}&select=historical_bars"
+                # Strip symbols to unify standard local query keys precisely
+                clean_symbol = symbol.replace("/", "").strip().upper()
+                url = f"{self.db_url}?symbol=eq.{clean_symbol}&select=historical_bars"
                 res = await client.get(url, headers=self.db_headers)
                 if res.status_code == 200 and res.json():
                     data = res.json()
@@ -94,10 +98,11 @@ class MarketDataService:
     def _fetch_yf_history(self, symbol: str) -> list | None:
         """Fetches historical daily bars via standard structural back-end arrays."""
         try:
-            yf_ticker = symbol
-            if symbol == "BTCUSD": yf_ticker = "BTC-USD"
-            elif symbol == "ETHUSD": yf_ticker = "ETH-USD"
-            elif symbol == "BNBUSD": yf_ticker = "BNB-USD"
+            clean_symbol = symbol.replace("/", "").strip().upper()
+            yf_ticker = clean_symbol
+            if clean_symbol == "BTCUSD": yf_ticker = "BTC-USD"
+            elif clean_symbol == "ETHUSD": yf_ticker = "ETH-USD"
+            elif clean_symbol == "BNBUSD": yf_ticker = "BNB-USD"
 
             ticker = yf.Ticker(yf_ticker)
             hist = ticker.history(period="45d")
@@ -105,7 +110,6 @@ class MarketDataService:
                 hist = hist.sort_index(ascending=False).head(30)
                 bars = []
                 for idx, row in hist.iterrows():
-                    # Formats strictly to clean ISO string layouts
                     date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
                     bars.append({
                         "datetime": date_str,
@@ -119,28 +123,38 @@ class MarketDataService:
     async def sync_asset_historical_cache(self, symbol: str) -> list | None:
         """Checks Supabase first. Utilizes custom routing to separate API pipelines entirely."""
         try:
-            is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
+            clean_symbol = symbol.replace("/", "").strip().upper()
+            existing_cache = await self.fetch_cached_history(clean_symbol)
+            if existing_cache and len(existing_cache) > 0:
+                return existing_cache
+
+            logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {clean_symbol}")
             
-            if symbol.startswith("^") or "=" in symbol or is_crypto:
-                formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
+            is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
+            
+            if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
+                formatted_bars = await asyncio.to_thread(self._fetch_yf_history, clean_symbol)
                 if formatted_bars:
                     async with httpx.AsyncClient(timeout=10.0) as client:
-                        payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
+                        payload = {"symbol": clean_symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
                         await client.post(self.db_url, headers=self.db_headers, json=payload)
                     return formatted_bars
                 return None
 
-            # Forex Pairs tracking fallback
+            # 🛠️ HARDENED FOREX PARAMETER INGESTION: Completely remove slashes for clean Twelve Data parsing
             async with httpx.AsyncClient(timeout=10.0) as client:
-                twelve_symbol = symbol if "/" in symbol else f"{symbol[:3]}/{symbol[3:]}"
-                params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
+                params = {"symbol": clean_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
                 res = await client.get(f"{self.twelve_base}/time_series", params=params)
                 if res.status_code == 200:
                     data = res.json()
-                    if "values" in data:
-                        payload = {"symbol": symbol, "historical_bars": data["values"], "updated_at": datetime.utcnow().isoformat()}
+                    # Defensive programming: use .get() to prevent missing key dictionary crashes
+                    values = data.get("values")
+                    if values:
+                        payload = {"symbol": clean_symbol, "historical_bars": values, "updated_at": datetime.utcnow().isoformat()}
                         await client.post(self.db_url, headers=self.db_headers, json=payload)
-                        return data["values"]
+                        return values
+                    else:
+                        logger.error(f"Twelve Data returned non-nominal message schema for {clean_symbol}: {data}")
         except Exception as err:
             logger.error(f"Critical execution error tracking cache sync arrays for {symbol}: {err}")
         return None
@@ -148,29 +162,28 @@ class MarketDataService:
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
         """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
         try:
-            is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
+            clean_symbol = symbol.replace("/", "").strip().upper()
+            is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
             
             if is_crypto:
-                live_price = await self.get_live_crypto_price(symbol)
+                live_price = await self.get_live_crypto_price(clean_symbol)
             else:
-                live_price = await self.get_live_market_price(symbol)
+                live_price = await self.get_live_market_price(clean_symbol)
                 
             if not live_price:
                 return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
-            # Database extraction layers
-            historical_bars = await self.fetch_cached_history(symbol)
+            # Synchronize history matrices
+            historical_bars = await self.fetch_cached_history(clean_symbol)
             if not historical_bars or len(historical_bars) == 0:
-                historical_bars = await self.sync_asset_historical_cache(symbol)
+                historical_bars = await self.sync_asset_historical_cache(clean_symbol)
                 
             if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Error:** Unable to assemble historical tracking matrix for `{display_name}`. Verify database state."
 
-            # 🧠 DEFENSIVE SCHEMA PROTECTION GUARD
-            # Safely verify that data nodes contain structural dictionary values to prevent sub-index typing crashes
             if not isinstance(historical_bars[0], dict) or "datetime" not in historical_bars[0]:
-                logger.warning(f"Corrupted array layout detected inside local cache database for ticker: {symbol}. Purging and recalculating.")
-                historical_bars = await self.sync_asset_historical_cache(symbol)
+                logger.warning(f"Corrupted array layout detected inside local cache database for ticker: {clean_symbol}. Purging and recalculating.")
+                historical_bars = await self.sync_asset_historical_cache(clean_symbol)
 
             latest_bar_date = str(historical_bars[0]["datetime"])[:10]
             target_index = 0
@@ -181,7 +194,6 @@ class MarketDataService:
                     
             prior_close = float(historical_bars[target_index]["close"])
             
-            # Prevent lookahead stale duplication loops
             if abs(live_price - prior_close) < 0.00001 and len(historical_bars) > target_index + 1:
                 target_index += 1
                 prior_close = float(historical_bars[target_index]["close"])
@@ -189,7 +201,6 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Execute calculation arrays
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
             if mc['prob_up'] > mc['prob_down']:
@@ -205,13 +216,14 @@ class MarketDataService:
                 trend_arrow = "⚡"
                 distribution_edge = "⚪ Balanced Distribution"
             
-            is_index_or_jpy = "JPY" in symbol or symbol.startswith("^") or "=" in symbol
-            if "/" in symbol and not is_index_or_jpy:
-                val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
-                ev_fmt = f"{mc['expected_value']:.5f}"
-            else:
+            is_index_or_jpy = "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol
+            if is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
                 ev_fmt = f"{mc['expected_value']:,.2f}"
+            else:
+                # Add conditional notation formatting for major standard fiat configurations
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
+                ev_fmt = f"{mc['expected_value']:.5f}"
                 
             kelly_str = f"`{mc['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Active Distribution Edge)"
 
