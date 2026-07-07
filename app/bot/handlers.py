@@ -14,22 +14,21 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "🚀 **System Online**\n\n"
         "Welcome Anthon-X!\n"
-        "The Market Intelligence Engine is alive and ready.\n\n"
+        "The Hybrid Caching Architecture is fully active.\n\n"
         "**Available Target Triggers:**\n"
         "💱 **Forex Pairs:**\n"
         "  /eurusd, /gbpusd, /gbpjpy, /usdcad, /usdchf, /audusd, /eurjpy, /eurgbp\n\n"
         "📈 **Stock Indices:**\n"
         "  /jp225, /us30, /us100\n\n"
         "🪙 **Cryptocurrencies:**\n"
-        "  /btcusd, /ethusd, /bnbusd\n\n"
-        "⚙️ **System Maintenance:** /health"
+        "  /btcusd, /ethusd, /bnbusd"
     )
     await update.message.reply_text(welcome_text, parse_mode="Markdown")
 
 async def health_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🟢 **System Core Status: Healthy**\nAll operational runtime loops functional.", parse_mode="Markdown")
+    await update.message.reply_text("🟢 **System Status: Healthy**\nCache metrics nominal.", parse_mode="Markdown")
 
-# Target Forex Pairs Route Handling Setup
+# Forex Handlers Mappings
 async def eurusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "EUR/USD", "EURUSD")
 async def gbpusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "GBP/USD", "GBPUSD")
 async def gbpjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "GBP/JPY", "GBPJPY")
@@ -39,12 +38,12 @@ async def audusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): aw
 async def eurjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "EUR/JPY", "EURJPY")
 async def eurgbp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE): await process_and_send_report(update, "EUR/GBP", "EURGBP")
 
-# Target Indices Route Handling Setup
-async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "NI225", "Nikkei 225 (JP225)")
-async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):   await process_and_send_report(update, "DJI", "Dow Jones 30 (US30)")
-async def us100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "IXIC", "Nasdaq 100 (US100)")
+# Indices Handlers Mappings
+async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "NI225", "JP225 (Nikkei)")
+async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):   await process_and_send_report(update, "DJI", "US30 (Dow Jones)")
+async def us100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "IXIC", "US100 (Nasdaq)")
 
-# Target Crypto Route Handling Setup
-async def btcusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "BTC/USD", "BTCUSD")
-async def ethusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "ETH/USD", "ETHUSD")
-async def bnbusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "BNB/USD", "BNBUSD")
+# Crypto Handlers Mappings
+async def btcusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "BTCUSD", "BTCUSD")
+async def ethusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "ETHUSD", "ETHUSD")
+async def bnbusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):  await process_and_send_report(update, "BNBUSD", "BNBUSD")
