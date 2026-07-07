@@ -58,8 +58,16 @@ class MarketDataService:
             return None
 
     async def sync_asset_historical_cache(self, symbol: str):
-        """Pulls comprehensive daily arrays and locks them into local storage. Run on scheduler."""
-        logger.info(f"Synchronizing 30-day historical cache layer for target: {symbol}")
+        """Checks Supabase first. Only pulls from Twelve Data if the record is missing completely."""
+        # Check if historical bars already exist inside the local database
+        existing_cache = await self.fetch_cached_history(symbol)
+        
+        if existing_cache and len(existing_cache) > 0:
+            logger.info(f"💾 Cache Match: Data for {symbol} already exists in Supabase. Skipping Twelve Data API call (0 credits used).")
+            return
+
+        # If cache is absent, proceed to safely execute an external pull
+        logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {symbol}")
         async with httpx.AsyncClient() as client:
             try:
                 params = {"symbol": symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
@@ -89,16 +97,14 @@ class MarketDataService:
         if not live_price:
             return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
-        # 2. Extract Prior Session Close (Crypto resolves live or via cache; FX uses strict prior complete day close)
+        # 2. Extract Prior Session Close from local storage
         historical_bars = await self.fetch_cached_history(symbol)
         
         if not historical_bars:
-            # Automatic fallback: if cache is empty, run a quick live sync
             await self.sync_asset_historical_cache(symbol)
             historical_bars = await self.fetch_cached_history(symbol)
             
         try:
-            # If historical profile is fully absent, handle error gracefully
             if not historical_bars:
                 return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
                 
@@ -108,7 +114,7 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            is_jpy = "JPY" in symbol or "JP225" in display_name
+            is_jpy = "JPY" in symbol or symbol == "N225"
             if "/" in symbol and not is_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
             else:
