@@ -9,24 +9,38 @@ from app.bot.bot import run_polling
 from app.services.market_data import MarketDataService
 
 async def warm_historical_cache_layer():
-    """Loops through all fiat and index trackers on bootup to populate historical profiles safely."""
+    """Loops through asset trackers on bootup using strict rate-safe pacing to protect API limits."""
     try:
-        # Give the system 5 seconds to let the main bot application boot up safely first
-        await asyncio.sleep(5)
-        logger.info("📡 Starting background cache warming and validation layer...")
+        # Give the system container 5 seconds to let the core bot application bind first
+        await asyncio.to_thread(asyncio.sleep, 5) if sys.version_info >= (3, 11) else await asyncio.sleep(5)
+        
+        # Check if this is running inside an ephemeral manual verification window
+        is_github_ci = os.getenv("GITHUB_ACTIONS") == "true"
+        
+        if is_github_ci:
+            logger.info("🧪 GitHub Actions environment detected. Warming ONLY free Yahoo Finance assets to protect production keys...")
+            # Complete bypass of Twelve Data forex endpoints to avoid rate-limiting your keys during deployments
+            sync_symbols = ["YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"]
+        else:
+            logger.info("📡 Production Server Initialization: Deploying master cache mapping sequences...")
+            sync_symbols = [
+                "EURUSD", "GBPUSD", "GBPJPY", "USDCAD", 
+                "USDCHF", "AUDUSD", "EURJPY", "EURGBP", 
+                "YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
+            ]
+            
         service = MarketDataService()
         
-        # 🎯 CRITICAL FIX: Synchronized precisely with market_data.py symbols matrix
-        sync_symbols = [
-            "EURUSD", "GBPUSD", "GBPJPY", "USDCAD", 
-            "USDCHF", "AUDUSD", "EURJPY", "EURGBP", 
-            "YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
-        ]
-        
-        for symbol in sync_symbols:
+        for index, symbol in enumerate(sync_symbols, start=1):
+            logger.info(f"🔄 Warming Cache Matrix [{index}/{len(sync_symbols)}]: Processing target asset {symbol}")
             await service.sync_asset_historical_cache(symbol)
-            # Structural pause to avoid free-tier API rate limit adjustments
-            await asyncio.sleep(8)
+            
+            # 🧠 RATIO FIX: Use conservative 12-second spacing for Forex pairs to guarantee 
+            # we never drop more than 5 requests inside a single 60-second window.
+            is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
+            sleep_duration = 12 if (is_forex and not is_github_ci) else 3
+            await asyncio.sleep(sleep_duration)
+            
         logger.info("✅ All market intelligence historical asset matrix indexes are fully synchronized.")
         
     except Exception as err:
@@ -34,20 +48,20 @@ async def warm_historical_cache_layer():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Handles continuous deployment bootstrap configurations safely."""
+    """Handles continuous deployment bootstrap configurations safely without blocking the runtime loop."""
     logger.info(f"Bootstrapping foundational operations for {settings.app_name}... Version: {settings.app_version}")
     
-    # 1. Check if this is a manual test inside GitHub Actions
     if os.getenv("GITHUB_ACTIONS") == "true":
-        # For CI validation steps, we run the cache sync sequentially and terminate
+        # Execute sequential validation check for CI paths and terminate cleanly
         await warm_historical_cache_layer()
         logger.info("✅ GitHub Actions environment validation complete. Terminating with exit code 0.")
         sys.exit(0)
         
-    # 2. Production Render Run Track: Spin up the warming sequence as an un-blocking independent task
+    # Production Track: Fire off the warming sequence as a completely detached background thread task
+    # This prevents your initialization loop from freezing your Telegram bot activation
     asyncio.create_task(warm_historical_cache_layer())
     
-    # 3. Mount and kick-off the continuous Telegram polling application instantly
+    # Mount and kick-off the continuous Telegram polling application instantly
     bot_task = asyncio.create_task(run_polling())
     
     yield
