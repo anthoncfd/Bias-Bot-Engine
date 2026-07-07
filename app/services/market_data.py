@@ -27,23 +27,21 @@ class MarketDataService:
         }
 
     async def _fetch_yf_live_cloud_safe(self, symbol: str) -> float | None:
-        """Asynchronously scrapes Yahoo's underlying chart feed directly using browser emulation.
-
-        Guarantees 0% data center blockage rates on platforms like Render.
-        """
+        """Asynchronously scrapes Yahoo's underlying chart feed directly using browser emulation."""
         try:
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1m"
             async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
                 res = await client.get(url)
                 if res.status_code == 200:
-                    meta = res.json()["chart"]["result"][0]["meta"]
-                    live_price = meta.get("regularMarketPrice")
-                    if live_price:
-                        return float(live_price)
+                    result = res.json().get("chart", {}).get("result", [])
+                    if result:
+                        meta = result[0].get("meta", {})
+                        live_price = meta.get("regularMarketPrice")
+                        if live_price:
+                            return float(live_price)
         except Exception as err:
             logger.error(f"Emulated Yahoo Finance live query failure for {symbol}: {err}")
             
-        # Emergency Secondary Track: Fallback to traditional thread-safe dictionary fast_info lookups
         try:
             ticker = yf.Ticker(symbol)
             val = ticker.fast_info.get('last_price')
@@ -55,7 +53,6 @@ class MarketDataService:
 
     async def get_live_crypto_price(self, symbol: str) -> float | None:
         """Queries cloud-resilient live crypto price ticks natively from Yahoo Finance."""
-        # Map internal database tickers to standard Yahoo Finance crypto formats
         clean_symbol = symbol.replace("/", "").strip().upper()
         if "BTC" in clean_symbol: yf_symbol = "BTC-USD"
         elif "ETH" in clean_symbol: yf_symbol = "ETH-USD"
@@ -87,7 +84,9 @@ class MarketDataService:
                 url = f"{self.db_url}?symbol=eq.{symbol}&select=historical_bars"
                 res = await client.get(url, headers=self.db_headers)
                 if res.status_code == 200 and res.json():
-                    return res.json()[0]["historical_bars"]
+                    data = res.json()
+                    if data and "historical_bars" in data[0]:
+                        return data[0]["historical_bars"]
             except Exception as err:
                 logger.error(f"Local Supabase data synchronization read breakdown on {symbol}: {err}")
             return None
@@ -95,7 +94,6 @@ class MarketDataService:
     def _fetch_yf_history(self, symbol: str) -> list | None:
         """Fetches historical daily bars via standard structural back-end arrays."""
         try:
-            # Map internal data codes over to Yahoo public history anchors
             yf_ticker = symbol
             if symbol == "BTCUSD": yf_ticker = "BTC-USD"
             elif symbol == "ETHUSD": yf_ticker = "ETH-USD"
@@ -107,8 +105,10 @@ class MarketDataService:
                 hist = hist.sort_index(ascending=False).head(30)
                 bars = []
                 for idx, row in hist.iterrows():
+                    # Formats strictly to clean ISO string layouts
+                    date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
                     bars.append({
-                        "datetime": idx.strftime("%Y-%m-%d"),
+                        "datetime": date_str,
                         "close": str(row['Close'])
                     })
                 return bars
@@ -118,26 +118,20 @@ class MarketDataService:
 
     async def sync_asset_historical_cache(self, symbol: str) -> list | None:
         """Checks Supabase first. Utilizes custom routing to separate API pipelines entirely."""
-        existing_cache = await self.fetch_cached_history(symbol)
-        if existing_cache and len(existing_cache) > 0:
-            return existing_cache
+        try:
+            is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
+            
+            if symbol.startswith("^") or "=" in symbol or is_crypto:
+                formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
+                if formatted_bars:
+                    async with httpx.AsyncClient(timeout=10.0) as client:
+                        payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
+                        await client.post(self.db_url, headers=self.db_headers, json=payload)
+                    return formatted_bars
+                return None
 
-        logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {symbol}")
-        
-        is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
-        
-        if symbol.startswith("^") or "=" in symbol or is_crypto:
-            formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
-            if formatted_bars:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
-                    await client.post(self.db_url, headers=self.db_headers, json=payload)
-                return formatted_bars
-            return None
-
-        # Forex Pairs fallback straight to Twelve Data
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
+            # Forex Pairs tracking fallback
+            async with httpx.AsyncClient(timeout=10.0) as client:
                 twelve_symbol = symbol if "/" in symbol else f"{symbol[:3]}/{symbol[3:]}"
                 params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
                 res = await client.get(f"{self.twelve_base}/time_series", params=params)
@@ -147,39 +141,47 @@ class MarketDataService:
                         payload = {"symbol": symbol, "historical_bars": data["values"], "updated_at": datetime.utcnow().isoformat()}
                         await client.post(self.db_url, headers=self.db_headers, json=payload)
                         return data["values"]
-            except Exception as err:
-                logger.error(f"System error updating historical tracking tables for {symbol}: {err}")
+        except Exception as err:
+            logger.error(f"Critical execution error tracking cache sync arrays for {symbol}: {err}")
         return None
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
         """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
-        is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
-        
-        if is_crypto:
-            live_price = await self.get_live_crypto_price(symbol)
-        else:
-            live_price = await self.get_live_market_price(symbol)
-            
-        if not live_price:
-            return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
-
-        historical_bars = await self.fetch_cached_history(symbol)
-        if not historical_bars:
-            historical_bars = await self.sync_asset_historical_cache(symbol)
-            
         try:
-            if not historical_bars or len(historical_bars) < 2:
-                return f"⚠️ **Cache Error:** Unable to assemble historical tracking matrix for `{display_name}`. Verify API configurations."
+            is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
             
-            latest_bar_date = historical_bars[0]["datetime"]
+            if is_crypto:
+                live_price = await self.get_live_crypto_price(symbol)
+            else:
+                live_price = await self.get_live_market_price(symbol)
+                
+            if not live_price:
+                return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
+
+            # Database extraction layers
+            historical_bars = await self.fetch_cached_history(symbol)
+            if not historical_bars or len(historical_bars) == 0:
+                historical_bars = await self.sync_asset_historical_cache(symbol)
+                
+            if not historical_bars or len(historical_bars) < 2:
+                return f"⚠️ **Cache Error:** Unable to assemble historical tracking matrix for `{display_name}`. Verify database state."
+
+            # 🧠 DEFENSIVE SCHEMA PROTECTION GUARD
+            # Safely verify that data nodes contain structural dictionary values to prevent sub-index typing crashes
+            if not isinstance(historical_bars[0], dict) or "datetime" not in historical_bars[0]:
+                logger.warning(f"Corrupted array layout detected inside local cache database for ticker: {symbol}. Purging and recalculating.")
+                historical_bars = await self.sync_asset_historical_cache(symbol)
+
+            latest_bar_date = str(historical_bars[0]["datetime"])[:10]
             target_index = 0
             
             local_today = datetime.now().strftime("%Y-%m-%d")
-            if latest_bar_date == local_today or len(historical_bars) > 1:
+            if latest_bar_date == local_today and len(historical_bars) > 1:
                 target_index = 1
                     
             prior_close = float(historical_bars[target_index]["close"])
             
+            # Prevent lookahead stale duplication loops
             if abs(live_price - prior_close) < 0.00001 and len(historical_bars) > target_index + 1:
                 target_index += 1
                 prior_close = float(historical_bars[target_index]["close"])
@@ -187,7 +189,7 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Run Monte Carlo execution matrix
+            # Execute calculation arrays
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
             if mc['prob_up'] > mc['prob_down']:
@@ -229,5 +231,5 @@ class MarketDataService:
                 f"📊 **Engine Bias:** `{direction_icon}`"
             )
         except Exception as err:
-            logger.critical(f"Schema compilation exception parsing metrics block for {symbol}: {err}")
+            logger.critical(f"Fatal compilation break inside asset calculation layer for {symbol}: {err}", exc_info=True)
             return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
