@@ -18,7 +18,8 @@ jobs:
     - name: Install Project Dependencies
       run: |
         python -m pip install --upgrade pip
-        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        # This explicitly forces pip to install yfinance and everything else
+        pip install yfinance httpx pydantic fastapi uvicorn python-telegram-bot
 
     - name: Execute Application Verification Test
       env:
@@ -30,6 +31,4 @@ jobs:
         DEBUG: "True"
       run: |
         # Directly invokes the FastAPI lifecycle inside the runtime script context.
-        # This will spin up your configuration, populate your Supabase history tables
-        # using the 8-second timing intervals, and close cleanly without freezing.
         python -c "import asyncio; from app.main import app; asyncio.run(app.router.lifespan_context(app).__aenter__())"
