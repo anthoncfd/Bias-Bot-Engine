@@ -1,26 +1,28 @@
 import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from app.api.routes import router as api_router
 from app.config import settings
 from app.logger import logger
 from app.bot.bot import run_polling
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Event Hook: Setup server background processes
-    logger.info(f"Bootstrapping foundational operations for {settings.app_name}...")
+    """Manages foundational bootstrap contexts and clean background task destruction flags."""
+    logger.info(f"Bootstrapping foundational operations for {settings.app_name}... Version: {settings.app_version}")
+    
+    # Initialize background long-polling worker contexts for the bot engine thread pool
     bot_task = asyncio.create_task(run_polling())
     
     yield
     
-    # Event Hook: Tear down background application contexts
-    logger.info("Gracefully severing system infrastructure states...")
+    logger.info("Signaling background worker threads for graceful task cancellation cascades...")
     bot_task.cancel()
     try:
         await bot_task
     except asyncio.CancelledError:
-        logger.info("System server core verified successful runtime termination stack.")
+        logger.info("Background telemetry monitoring loops successfully broken and detached.")
+    
+    logger.info("Ecosystem internal applications completely finalized.")
 
 app = FastAPI(
     title=settings.app_name,
@@ -29,21 +31,11 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Route Mounting Configurations
-app.include_router(api_router, prefix="/api/v1")
-
-@app.get("/")
-async def root():
+@app.get("/health", tags=["System Operational Infrastructure"])
+async def system_health_check():
     return {
-        "message": f"Welcome to {settings.app_name} v{settings.app_version}",
-        "docs": "/docs"
+        "status": "operational",
+        "app_name": settings.app_name,
+        "version": settings.app_version,
+        "engine_mode": "Production" if not settings.debug else "Development"
     }
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(
-        "app.main:app",
-        host=settings.host,
-        port=settings.port,
-        reload=settings.debug
-    )
