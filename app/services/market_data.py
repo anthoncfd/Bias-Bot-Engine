@@ -8,14 +8,13 @@ from app.logger import logger
 from app.services.quant_math import QuantitativeMathEngine
 
 class MarketDataService:
-    """Enterprise-grade hybrid financial broker utilizing explicit routing boundaries,
+    """Enterprise-grade hybrid financial broker utilizing cloud-resilient public streams,
 
-    zero-fail fallbacks, and unified probabilistic bias filtering.
+    browser-emulated index scrapers, and local database caches.
     """
     
     def __init__(self):
         self.twelve_base = "https://api.twelvedata.com"
-        self.binance_base = "https://api.binance.com/api/v3"
         self.db_headers = {
             "apikey": settings.supabase_key,
             "Authorization": f"Bearer {settings.supabase_key}",
@@ -23,58 +22,49 @@ class MarketDataService:
             "Prefer": "resolution=merge-duplicates"
         }
         self.db_url = f"{settings.supabase_url}/rest/v1/market_history"
+        # Standard corporate user-agent to bypass cloud IP screening
+        self.browser_headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        }
 
     async def get_live_crypto_price(self, symbol: str) -> float | None:
-        """Queries uncapped public Binance endpoints with strict explicit fallback mappings."""
+        """Queries cloud-friendly public exchange endpoints natively accessible from US hosting regions."""
         try:
-            # Explicit String Mapping Matrix - Completely removes automated string parsing risks
-            mapping = {
-                "BTCUSD": "BTCUSDT",
-                "ETHUSD": "ETHUSDT",
-                "BNBUSD": "BNBUSDT",
-                "BTC/USD": "BTCUSDT",
-                "ETH/USD": "ETHUSDT",
-                "BNB/USD": "BNBUSDT"
-            }
+            # Normalize target asset symbols
+            clean_symbol = symbol.replace("/", "").strip().upper()
+            base_currency = "BTC" if "BTC" in clean_symbol else "ETH" if "ETH" in clean_symbol else "BNB"
             
-            clean_symbol = symbol.strip().upper()
-            binance_symbol = mapping.get(clean_symbol, f"{clean_symbol.replace('/', '')}USDT")
-
-            # Enforce clear, explicit string checks
-            if binance_symbol == "BTCUSDUSDT": binance_symbol = "BTCUSDT"
-            if binance_symbol == "ETHUSDUSDT": binance_symbol = "ETHUSDT"
-            if binance_symbol == "BNBUSDUSDT": binance_symbol = "BNBUSDT"
-
-            async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-                res = await client.get(f"{self.binance_base}/ticker/price", params={"symbol": binance_symbol})
+            async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
+                # Primary Track: Coinbase Public API (100% immune to Render US Geo-IP blockades)
+                res = await client.get(f"https://api.coinbase.com/v2/prices/{base_currency}-USD/spot")
                 if res.status_code == 200:
-                    return float(res.json()["price"])
+                    return float(res.json()["data"]["amount"])
                 
-                # Internal Failover Path: If Binance encounters a geo-restriction, leverage alternative public stream
-                alt_res = await client.get(f"https://api.coingecko.com/api/v3/simple/price", params={
-                    "ids": "bitcoin" if "BTC" in binance_symbol else "ethereum" if "ETH" in binance_symbol else "binancecoin",
-                    "vs_currencies": "usd"
-                })
+                # Backup Track: CoinGecko Public Simple Pricing Matrix
+                cg_id = "bitcoin" if base_currency == "BTC" else "ethereum" if base_currency == "ETH" else "binancecoin"
+                alt_res = await client.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
                 if alt_res.status_code == 200:
-                    key = "bitcoin" if "BTC" in binance_symbol else "ethereum" if "ETH" in binance_symbol else "binancecoin"
-                    return float(alt_res.json()[key]["usd"])
+                    return float(alt_res.json()[cg_id]["usd"])
 
         except Exception as err:
-            logger.error(f"Failed pulling public crypto matrix feed for {symbol}: {err}")
+            logger.error(f"Cloud crypto infrastructure retrieval failure for {symbol}: {err}")
         return None
 
-    def _fetch_yf_live(self, symbol: str) -> float | None:
-        """Synchronous isolated helper with strict thread-safe download parameters."""
+    async def _fetch_yf_live_cloud_safe(self, symbol: str) -> float | None:
+        """Asynchronously scrapes Yahoo's underlying chart feed directly using browser emulation."""
         try:
-            # Use direct network downloading instead of accessing ticker dictionary variables
-            data = yf.download(tickers=symbol, period="1d", interval="1m", progress=False, verbose=False)
-            if not data.empty and 'Close' in data.columns:
-                # Target the absolute latest live 1-minute candle tick price node
-                return float(data['Close'].iloc[-1])
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=1d&interval=1m"
+            async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
+                res = await client.get(url)
+                if res.status_code == 200:
+                    meta = res.json()["chart"]["result"][0]["meta"]
+                    live_price = meta.get("regularMarketPrice")
+                    if live_price:
+                        return float(live_price)
         except Exception as err:
-            logger.error(f"Yahoo Finance live download network execution failure for {symbol}: {err}")
-        
-        # Emergency Index Recovery Track: Attempt standard fast_info parsing if the downloader drops
+            logger.error(f"Emulated index query execution failure for {symbol}: {err}")
+            
+        # Emergency Fallback: If query1 is throttled, drop to traditional thread safe dictionary reading
         try:
             ticker = yf.Ticker(symbol)
             val = ticker.fast_info.get('last_price')
@@ -85,11 +75,11 @@ class MarketDataService:
         return None
 
     async def get_live_market_price(self, symbol: str) -> float | None:
-        """Routes index assets directly to Yahoo Finance threads and fiat pairs to Twelve Data."""
+        """Routes index assets directly to safe cloud scrapers and fiat pairs to Twelve Data."""
         if symbol.startswith("^"):
-            return await asyncio.to_thread(self._fetch_yf_live, symbol)
+            return await self._fetch_yf_live_cloud_safe(symbol)
             
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
             try:
                 res = await client.get(f"{self.twelve_base}/price", params={"symbol": symbol, "apikey": settings.market_api_key})
                 if res.status_code == 200:
@@ -97,12 +87,12 @@ class MarketDataService:
                     if "price" in data:
                         return float(data["price"])
             except Exception as err:
-                logger.error(f"Upstream live pricing retrieval exception on asset {symbol}: {err}")
+                logger.error(f"Twelve Data upstream live pricing retrieval exception on asset {symbol}: {err}")
             return None
 
     async def fetch_cached_history(self, symbol: str) -> list | None:
         """Retrieves 30-day structural daily close profiles from Supabase local cache."""
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 url = f"{self.db_url}?symbol=eq.{symbol}&select=historical_bars"
                 res = await client.get(url, headers=self.db_headers)
@@ -113,7 +103,7 @@ class MarketDataService:
             return None
 
     def _fetch_yf_history(self, symbol: str) -> list | None:
-        """Fetches daily bars from Yahoo Finance and formats them to match Twelve Data structure."""
+        """Fetches historical daily bars via standard structural back-end arrays."""
         try:
             ticker = yf.Ticker(symbol)
             hist = ticker.history(period="45d")
@@ -141,12 +131,12 @@ class MarketDataService:
         if symbol.startswith("^"):
             formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
             if formatted_bars:
-                async with httpx.AsyncClient(timeout=15.0) as client:
+                async with httpx.AsyncClient(timeout=10.0) as client:
                     payload = {"symbol": symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
                     await client.post(self.db_url, headers=self.db_headers, json=payload)
             return
 
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 params = {"symbol": symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
                 res = await client.get(f"{self.twelve_base}/time_series", params=params)
@@ -190,10 +180,9 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # 📊 RUN VECTORIZED QUANT ENGINE FROM SEPARATE MODULE
+            # Run simulation out of our mathematical engine
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
-            # 🧠 Unified Directional Logic: The Engine Bias is governed by the forward-looking stochastic edge
             if mc['prob_up'] > mc['prob_down']:
                 direction_icon = "🟢 BULLISH BIAS"
                 trend_arrow = "📈"
@@ -207,7 +196,6 @@ class MarketDataService:
                 trend_arrow = "⚡"
                 distribution_edge = "⚪ Balanced Distribution"
             
-            # Formatting decimal layouts based on asset configurations
             is_index_or_jpy = "JPY" in symbol or symbol.startswith("^")
             if "/" in symbol and not is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
