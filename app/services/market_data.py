@@ -1,12 +1,13 @@
 import httpx
 import asyncio
 import yfinance as yf
+import numpy as np
 from datetime import datetime
 from app.config import settings
 from app.logger import logger
 
 class MarketDataService:
-    """Enterprise-grade hybrid financial broker utilizing local DB caches and public streams."""
+    """Enterprise-grade financial broker utilizing database caches, public streams, and an integrated Monte Carlo simulation engine."""
     
     def __init__(self):
         self.twelve_base = "https://api.twelvedata.com"
@@ -22,7 +23,6 @@ class MarketDataService:
     async def get_live_crypto_price(self, symbol: str) -> float | None:
         """Queries uncapped public exchange endpoints. Consumes 0 Twelve Data credits."""
         try:
-            # Explicitly force clean formatting: turn BTCUSD or BTC/USD straight into BTCUSDT
             clean_symbol = symbol.replace("/", "").upper()
             if clean_symbol.endswith("USD") and not clean_symbol.endswith("USDT"):
                 binance_symbol = clean_symbol.replace("USD", "USDT")
@@ -33,8 +33,6 @@ class MarketDataService:
                 res = await client.get(f"{self.binance_base}/ticker/price", params={"symbol": binance_symbol})
                 if res.status_code == 200:
                     return float(res.json()["price"])
-                else:
-                    logger.error(f"Binance API returned status {res.status_code} for {binance_symbol}: {res.text}")
         except Exception as err:
             logger.error(f"Failed pulling public crypto matrix feed for {symbol}: {err}")
         return None
@@ -43,20 +41,15 @@ class MarketDataService:
         """Synchronous helper with multi-layered fallback running inside an isolated worker thread."""
         try:
             ticker = yf.Ticker(symbol)
-            
-            # Primary attempt: Get fast info attributes (Extremely reliable and fast)
             try:
                 live_price = ticker.fast_info.get('last_price')
                 if live_price and live_price > 0:
                     return float(live_price)
             except Exception:
                 pass
-
-            # Secondary fallback: Extract from current history matrix
             todays_data = ticker.history(period="1d")
             if not todays_data.empty and 'Close' in todays_data.columns:
                 return float(todays_data['Close'].iloc[-1])
-                
         except Exception as err:
             logger.error(f"Yahoo Finance live price extraction failure for {symbol}: {err}")
         return None
@@ -135,8 +128,58 @@ class MarketDataService:
             except Exception as err:
                 logger.error(f"System error updating historical tracking tables for {symbol}: {err}")
 
+    def _calculate_monte_carlo(self, current_price: float, historical_bars: list) -> dict:
+        """Runs an ultra-fast vectorized Geometric Brownian Motion simulation using NumPy. No latency overhead."""
+        try:
+            # 1. Generate log returns from history (ordered oldest to newest)
+            closes = [float(bar["close"]) for bar in historical_bars][::-1]
+            log_returns = np.diff(np.log(closes))
+            
+            # 2. Extract drift (mu) and volatility (sigma) parameters
+            mu = np.mean(log_returns)
+            sigma = np.std(log_returns)
+            
+            # Guard against zero-volatility calculation crashes
+            if sigma == 0: sigma = 0.001
+            
+            # 3. Vectorized Simulation Configuration (2,000 paths over next 4 structural intraday intervals)
+            simulations = 2000
+            steps = 4 
+            dt = 1.0
+            
+            # Pre-allocate random normal distributions inside matrix paths
+            Z = np.random.normal(0, 1, (steps, simulations))
+            
+            # Geometric Brownian Motion mathematical execution array
+            drift_factor = (mu - 0.5 * (sigma ** 2)) * dt
+            vol_factor = sigma * np.sqrt(dt)
+            
+            # Accumulate growth vectors across time horizons
+            price_paths = np.zeros((steps + 1, simulations))
+            price_paths[0] = current_price
+            
+            for t in range(1, steps + 1):
+                price_paths[t] = price_paths[t-1] * np.exp(drift_factor + vol_factor * Z[t-1])
+            
+            final_prices = price_paths[-1]
+            
+            # 4. Extract explicit mathematical probability density profiles
+            expected_value = float(np.mean(final_prices))
+            prob_up = float(np.sum(final_prices > current_price) / simulations) * 100
+            prob_down = 100.0 - prob_up
+            
+            return {
+                "expected_value": expected_value,
+                "prob_up": prob_up,
+                "prob_down": prob_down,
+                "sigma_pct": float(sigma * 100)
+            }
+        except Exception as err:
+            logger.error(f"NumPy mathematical engine execution fault: {err}")
+            return {"expected_value": current_price, "prob_up": 50.0, "prob_down": 50.0, "sigma_pct": 0.0}
+
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
-        """Combines local historical boundaries with live single pricing nodes for structural analysis."""
+        """Combines structural daily data with live pricing and high-speed probabilistic forecasts."""
         is_crypto = symbol.replace("/", "").upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
         
         if is_crypto:
@@ -153,7 +196,7 @@ class MarketDataService:
             historical_bars = await self.fetch_cached_history(symbol)
             
         try:
-            if not historical_bars:
+            if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
             
             today_str = datetime.utcnow().strftime("%Y-%m-%d")
@@ -167,14 +210,24 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
+            # 📊 RUN VECTORIZED QUANT ENGINE (Runs completely in memory using NumPy - 0 credit footprint)
+            mc = self._calculate_monte_carlo(live_price, historical_bars)
+            
             is_index_or_jpy = "JPY" in symbol or symbol.startswith("^")
             if "/" in symbol and not is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
+                ev_fmt = f"{mc['expected_value']:.5f}"
             else:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:,.3f}", f"{prior_close:,.3f}", f"{net_change:+,.3f}"
+                ev_fmt = f"{mc['expected_value']:,.3f}"
                 
             direction_icon = "🟢 BULLISH BIAS" if change_pct >= 0 else "🔴 BEARISH BIAS"
             trend_arrow = "📈" if change_pct >= 0 else "📉"
+            
+            # Determine mathematical distribution density edge
+            distribution_edge = f"🟢 Long Advantage ({mc['prob_up']:.1f}%)" if mc['prob_up'] >= 52.0 else \
+                                f"🔴 Short Advantage ({mc['prob_down']:.1f}%)" if mc['prob_down'] >= 52.0 else \
+                                "⚪ Balanced Random Walk"
             
             return (
                 f"{trend_arrow} **{display_name} METRICS**\n"
@@ -183,6 +236,11 @@ class MarketDataService:
                 f"• **Previous Close:** `{cls_fmt}`\n"
                 f"• **Net Deviation:** `{chg_fmt}`\n"
                 f"• **Percentage Shift:** `{change_pct:+.2f}%`\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🎲 **MONTE CARLO SESSION ESTIMATE**\n"
+                f"• **Simulated Expected Value:** `{ev_fmt}`\n"
+                f"• **Historical Period Volatility:** `{mc['sigma_pct']:.2f}%`\n"
+                f"• **Distribution Edge:** `{distribution_edge}`\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"📊 **Engine Bias:** `{direction_icon}`"
             )
