@@ -10,36 +10,44 @@ from app.services.market_data import MarketDataService
 
 async def warm_historical_cache_layer():
     """Loops through all fiat and index trackers on bootup to populate historical profiles safely."""
-    logger.info("Starting background cache warming and validation layer...")
-    service = MarketDataService()
-    
-    # Swapped indices to Yahoo Finance native tickers (prefixed with ^)
-    sync_symbols = [
-        "EUR/USD", "GBP/USD", "GBP/JPY", "USD/CAD", 
-        "USD/CHF", "AUD/USD", "EUR/JPY", "EUR/GBP", 
-        "^N225", "^DJI", "^IXIC"
-    ]
-    
-    for symbol in sync_symbols:
-        await service.sync_asset_historical_cache(symbol)
-        # 8-second structural pause completely avoids free-tier 429 API rate limit exhaustion
-        await asyncio.sleep(8)
-    logger.info("All market intelligence historical asset matrix indexes are fully synchronized.")
+    try:
+        # Give the system 5 seconds to let the main bot application boot up safely first
+        await asyncio.sleep(5)
+        logger.info("📡 Starting background cache warming and validation layer...")
+        service = MarketDataService()
+        
+        # 🎯 CRITICAL FIX: Synchronized precisely with market_data.py symbols matrix
+        sync_symbols = [
+            "EURUSD", "GBPUSD", "GBPJPY", "USDCAD", 
+            "USDCHF", "AUDUSD", "EURJPY", "EURGBP", 
+            "YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
+        ]
+        
+        for symbol in sync_symbols:
+            await service.sync_asset_historical_cache(symbol)
+            # Structural pause to avoid free-tier API rate limit adjustments
+            await asyncio.sleep(8)
+        logger.info("✅ All market intelligence historical asset matrix indexes are fully synchronized.")
+        
+    except Exception as err:
+        logger.error(f"Cache warming loop encountered an initialization exception: {err}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles continuous deployment bootstrap configurations safely."""
     logger.info(f"Bootstrapping foundational operations for {settings.app_name}... Version: {settings.app_version}")
     
-    # 1. Always run the validation and cache warming sequence first
-    await warm_historical_cache_layer()
-    
-    # 2. Check if this is a manual test inside GitHub Actions
+    # 1. Check if this is a manual test inside GitHub Actions
     if os.getenv("GITHUB_ACTIONS") == "true":
+        # For CI validation steps, we run the cache sync sequentially and terminate
+        await warm_historical_cache_layer()
         logger.info("✅ GitHub Actions environment validation complete. Terminating with exit code 0.")
         sys.exit(0)
         
-    # 3. Otherwise, proceed with normal 24/7 hosting on Render
+    # 2. Production Render Run Track: Spin up the warming sequence as an un-blocking independent task
+    asyncio.create_task(warm_historical_cache_layer())
+    
+    # 3. Mount and kick-off the continuous Telegram polling application instantly
     bot_task = asyncio.create_task(run_polling())
     
     yield
