@@ -9,7 +9,7 @@ from app.services.quant_math import QuantitativeMathEngine
 
 class MarketDataService:
     """Enterprise-grade hybrid financial broker utilizing cloud-resilient public streams,
-    browser-emulated index scrapers, and local database caches.
+    browser-emulated index/crypto scrapers, and local database caches.
     """
     
     def __init__(self):
@@ -120,8 +120,13 @@ class MarketDataService:
         return None
 
     async def sync_asset_historical_cache(self, symbol: str) -> list | None:
-        """Checks Supabase first. Sourcing data from independent endpoints safely."""
+        """Checks Supabase first. Utilizes custom routing to separate API pipelines entirely."""
         clean_symbol = symbol.replace("/", "").strip().upper()
+        existing_cache = await self.fetch_cached_history(clean_symbol)
+        if existing_cache and len(existing_cache) > 0:
+            return existing_cache
+
+        logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {clean_symbol}")
         
         is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
         if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
@@ -133,7 +138,7 @@ class MarketDataService:
                 return formatted_bars
             return None
 
-        # Hardened Forex Execution Pipeline
+        # Forex Pairs tracking fallback
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
                 twelve_symbol = f"{clean_symbol[:3]}/{clean_symbol[3:]}"
@@ -147,11 +152,11 @@ class MarketDataService:
                         await client.post(self.db_url, headers=self.db_headers, json=payload)
                         return values
             except Exception as err:
-                logger.error(f"Twelve Data history tracking failure for {clean_symbol}: {err}")
+                logger.error(f"System error updating historical tracking tables for {clean_symbol}: {err}")
         return None
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
-        """Enforces iron-clad exception limits to guarantee the bot never crashes or drops its connection."""
+        """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
         try:
             clean_symbol = symbol.replace("/", "").strip().upper()
             is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
@@ -164,16 +169,13 @@ class MarketDataService:
             if not live_price:
                 return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
-            # 🧠 DEFENSIVE PROGRAMMING OVERHAUL: Immediate JIT recovery on cache miss
             historical_bars = await self.fetch_cached_history(clean_symbol)
             if not historical_bars or len(historical_bars) == 0:
-                logger.info(f"🔄 JIT Execution: Cache missed during live command for {clean_symbol}. Running on-demand sync...")
                 historical_bars = await self.sync_asset_historical_cache(clean_symbol)
                 
-            # Absolute structural safety boundary check
             if not historical_bars or len(historical_bars) < 2:
-                return f"⚠️ **Cache Warm-up:** Initializing historical matrices for `{display_name}`. Re-query in 3 seconds."
-            
+                return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
+
             latest_bar_date = historical_bars[0]["datetime"]
             target_index = 0
             
@@ -190,26 +192,48 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
+            # Execute mathematical path simulation
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
+            prob_up = mc['prob_up']
+            prob_down = mc['prob_down']
             
-            if mc['prob_up'] > mc['prob_down']:
+            # 🧠 HARDENED DUAL-FILTER BIAS LOGIC MATRIX (Mathematical Intersection Lock)
+            if prob_up > prob_down and net_change > 0:
                 direction_icon = "🟢 BULLISH BIAS"
                 trend_arrow = "📈"
-                distribution_edge = f"🟢 Long Advantage ({mc['prob_up']:.1f}%)"
-            elif mc['prob_down'] > mc['prob_up']:
+                distribution_edge = f"🟢 Long Advantage ({prob_up:.1f}%)"
+            elif prob_down > prob_up and net_change < 0:
                 direction_icon = "🔴 BEARISH BIAS"
                 trend_arrow = "📉"
-                distribution_edge = f"🔴 Short Advantage ({mc['prob_down']:.1f}%)"
+                distribution_edge = f"🔴 Short Advantage ({prob_down:.1f}%)"
+            elif prob_up > prob_down and net_change <= 0:
+                # Simulation indicates upside drift edge, but daily session candle is currently bearish
+                direction_icon = "🟡 CONDITIONAL BULLISH DRIFT"
+                trend_arrow = "⚡"
+                distribution_edge = f"🟡 Long Skew / Counter-Trend ({prob_up:.1f}%)"
+            elif prob_down > prob_up and net_change >= 0:
+                # Simulation indicates downside drift edge, but daily session candle is currently bullish
+                direction_icon = "🟡 CONDITIONAL BEARISH DRIFT"
+                trend_arrow = "⚡"
+                distribution_edge = f"🔴 Short Skew / Counter-Trend ({prob_down:.1f}%)"
             else:
                 direction_icon = "⚪ NEUTRAL RANDOM WALK"
                 trend_arrow = "⚡"
                 distribution_edge = "⚪ Balanced Distribution"
             
+            # 🛠️ HARDENED DECIMAL STRING DISPLAY FORMATTING
             is_index_or_jpy = "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol
-            if is_index_or_jpy:
+            
+            if is_crypto:
+                # Enforce clean 2-decimal precision for crypto spot assets
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
+                ev_fmt = f"{mc['expected_value']:,.2f}"
+            elif is_index_or_jpy:
+                # Enforce index/jpy 2-decimal presentation format
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
                 ev_fmt = f"{mc['expected_value']:,.2f}"
             else:
+                # Standard 5-decimal precision strictly reserved for traditional fiat Forex currency pairs
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
                 ev_fmt = f"{mc['expected_value']:.5f}"
                 
@@ -231,5 +255,5 @@ class MarketDataService:
                 f"📊 **Engine Bias:** `{direction_icon}`"
             )
         except Exception as err:
-            logger.critical(f"Fatal crash intercepted inside handler for {symbol}: {err}", exc_info=True)
-            return f"❌ **Processing Error:** Structural error generating report matrices for `{display_name}`."
+            logger.critical(f"Schema compilation exception parsing metrics block for {clean_symbol}: {err}", exc_info=True)
+            return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
