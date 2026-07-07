@@ -22,7 +22,6 @@ class MarketDataService:
             "Prefer": "resolution=merge-duplicates"
         }
         self.db_url = f"{settings.supabase_url}/rest/v1/market_history"
-        # Standard corporate user-agent to bypass cloud IP screening
         self.browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -30,22 +29,13 @@ class MarketDataService:
     async def get_live_crypto_price(self, symbol: str) -> float | None:
         """Queries cloud-friendly public exchange endpoints natively accessible from US hosting regions."""
         try:
-            # Normalize target asset symbols
             clean_symbol = symbol.replace("/", "").strip().upper()
             base_currency = "BTC" if "BTC" in clean_symbol else "ETH" if "ETH" in clean_symbol else "BNB"
             
             async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
-                # Primary Track: Coinbase Public API (100% immune to Render US Geo-IP blockades)
                 res = await client.get(f"https://api.coinbase.com/v2/prices/{base_currency}-USD/spot")
                 if res.status_code == 200:
                     return float(res.json()["data"]["amount"])
-                
-                # Backup Track: CoinGecko Public Simple Pricing Matrix
-                cg_id = "bitcoin" if base_currency == "BTC" else "ethereum" if base_currency == "ETH" else "binancecoin"
-                alt_res = await client.get(f"https://api.coingecko.com/api/v3/simple/price?ids={cg_id}&vs_currencies=usd")
-                if alt_res.status_code == 200:
-                    return float(alt_res.json()[cg_id]["usd"])
-
         except Exception as err:
             logger.error(f"Cloud crypto infrastructure retrieval failure for {symbol}: {err}")
         return None
@@ -64,7 +54,6 @@ class MarketDataService:
         except Exception as err:
             logger.error(f"Emulated index query execution failure for {symbol}: {err}")
             
-        # Emergency Fallback: If query1 is throttled, drop to traditional thread safe dictionary reading
         try:
             ticker = yf.Ticker(symbol)
             val = ticker.fast_info.get('last_price')
@@ -76,7 +65,8 @@ class MarketDataService:
 
     async def get_live_market_price(self, symbol: str) -> float | None:
         """Routes index assets directly to safe cloud scrapers and fiat pairs to Twelve Data."""
-        if symbol.startswith("^"):
+        # Standardize matching patterns for index indicators
+        if symbol.startswith("^") or "=" in symbol:
             return await self._fetch_yf_live_cloud_safe(symbol)
             
         async with httpx.AsyncClient(timeout=10.0, headers=self.browser_headers) as client:
@@ -128,7 +118,7 @@ class MarketDataService:
 
         logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {symbol}")
         
-        if symbol.startswith("^"):
+        if symbol.startswith("^") or "=" in symbol:
             formatted_bars = await asyncio.to_thread(self._fetch_yf_history, symbol)
             if formatted_bars:
                 async with httpx.AsyncClient(timeout=10.0) as client:
@@ -169,18 +159,30 @@ class MarketDataService:
             if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
             
-            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            # 🧠 HARDENED TIMEZONE LOGIC: Locate and extract the absolute true previous session close
+            # We explicitly read the absolute latest date string stored in the payload
+            latest_bar_date = historical_bars[0]["datetime"]
             target_index = 0
             
-            if historical_bars[0]["datetime"] == today_str:
-                if len(historical_bars) > 1:
-                    target_index = 1
+            # If the current day's live session is active or trading, the data vendor appends it to index 0.
+            # We compare the local current date format directly to look for an active lookahead match.
+            local_today = datetime.now().strftime("%Y-%m-%d")
+            if latest_bar_date == local_today or len(historical_bars) > 1:
+                # If there's an ongoing active session bar in index 0, safely drop back to index 1 
+                # to anchor calculations on the fully completed, settled Previous Close.
+                target_index = 1
                     
             prior_close = float(historical_bars[target_index]["close"])
+            
+            # Absolute Safety Guard: If the data vendor gives a stale duplication anomaly, pull index 2
+            if abs(live_price - prior_close) < 0.00001 and len(historical_bars) > target_index + 1:
+                target_index += 1
+                prior_close = float(historical_bars[target_index]["close"])
+
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Run simulation out of our mathematical engine
+            # Run simulation
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
             if mc['prob_up'] > mc['prob_down']:
@@ -196,13 +198,13 @@ class MarketDataService:
                 trend_arrow = "⚡"
                 distribution_edge = "⚪ Balanced Distribution"
             
-            is_index_or_jpy = "JPY" in symbol or symbol.startswith("^")
+            is_index_or_jpy = "JPY" in symbol or symbol.startswith("^") or "=" in symbol
             if "/" in symbol and not is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
                 ev_fmt = f"{mc['expected_value']:.5f}"
             else:
-                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.3f}", f"{prior_close:,.3f}", f"{net_change:+,.3f}"
-                ev_fmt = f"{mc['expected_value']:,.3f}"
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
+                ev_fmt = f"{mc['expected_value']:,.2f}"
                 
             kelly_str = f"`{mc['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Active Distribution Edge)"
 
