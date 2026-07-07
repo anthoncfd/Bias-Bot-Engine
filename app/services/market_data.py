@@ -8,7 +8,10 @@ from app.logger import logger
 from app.services.quant_math import QuantitativeMathEngine
 
 class MarketDataService:
-    """Institutional-grade financial broker utilizing explicit routing boundaries and zero-fail fallbacks."""
+    """Enterprise-grade hybrid financial broker utilizing explicit routing boundaries,
+
+    zero-fail fallbacks, and unified probabilistic bias filtering.
+    """
     
     def __init__(self):
         self.twelve_base = "https://api.twelvedata.com"
@@ -156,7 +159,7 @@ class MarketDataService:
                 logger.error(f"System error updating historical tracking tables for {symbol}: {err}")
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
-        """Combines structural daily data with live pricing and routes statistical arrays to the Math Engine module."""
+        """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
         is_crypto = symbol.replace("/", "").strip().upper() in ["BTCUSD", "ETHUSD", "BNBUSD"]
         
         if is_crypto:
@@ -187,9 +190,24 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Call our isolated math engine layer
+            # 📊 RUN VECTORIZED QUANT ENGINE FROM SEPARATE MODULE
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             
+            # 🧠 Unified Directional Logic: The Engine Bias is governed by the forward-looking stochastic edge
+            if mc['prob_up'] > mc['prob_down']:
+                direction_icon = "🟢 BULLISH BIAS"
+                trend_arrow = "📈"
+                distribution_edge = f"🟢 Long Advantage ({mc['prob_up']:.1f}%)"
+            elif mc['prob_down'] > mc['prob_up']:
+                direction_icon = "🔴 BEARISH BIAS"
+                trend_arrow = "📉"
+                distribution_edge = f"🔴 Short Advantage ({mc['prob_down']:.1f}%)"
+            else:
+                direction_icon = "⚪ NEUTRAL RANDOM WALK"
+                trend_arrow = "⚡"
+                distribution_edge = "⚪ Balanced Distribution"
+            
+            # Formatting decimal layouts based on asset configurations
             is_index_or_jpy = "JPY" in symbol or symbol.startswith("^")
             if "/" in symbol and not is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
@@ -198,22 +216,14 @@ class MarketDataService:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:,.3f}", f"{prior_close:,.3f}", f"{net_change:+,.3f}"
                 ev_fmt = f"{mc['expected_value']:,.3f}"
                 
-            direction_icon = "🟢 BULLISH BIAS" if change_pct >= 0 else "🔴 BEARISH BIAS"
-            trend_arrow = "📈" if change_pct >= 0 else "📉"
-            
-            distribution_edge = f"🟢 Long Advantage ({mc['prob_up']:.1f}%)" if mc['prob_up'] >= 52.0 else \
-                                f"🔴 Short Advantage ({mc['prob_down']:.1f}%)" if mc['prob_down'] >= 52.0 else \
-                                "⚪ Balanced Random Walk"
-            
-            kelly_str = f"`{mc['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Mathematical Edge Present)"
+            kelly_str = f"`{mc['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Active Distribution Edge)"
 
             return (
                 f"{trend_arrow} **{display_name} METRICS**\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"• **Current Price:** `{val_fmt}`\n"
                 f"• **Previous Close:** `{cls_fmt}`\n"
-                f"• **Net Deviation:** `{chg_fmt}`\n"
-                f"• **Percentage Shift:** `{change_pct:+.2f}%`\n"
+                f"• **Net Deviation:** `{chg_fmt}` (`{change_pct:+.2f}%`)\n"
                 f"━━━━━━━━━━━━━━━━━━\n"
                 f"🎲 **MONTE CARLO SESSION PROBABILITIES**\n"
                 f"• **Simulated Expected Value:** `{ev_fmt}`\n"
