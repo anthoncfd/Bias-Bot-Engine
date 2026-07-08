@@ -1,15 +1,14 @@
 import httpx
 import asyncio
 import yfinance as yf
-import numpy as np
-from datetime import datetime
+from datetime import datetime, timezone
 from app.config import settings
 from app.logger import logger
 from app.services.quant_math import QuantitativeMathEngine
 
 class MarketDataService:
-    """Enterprise-grade hybrid financial broker utilizing cloud-resilient public streams,
-    browser-emulated index/crypto scrapers, and local database caches.
+    """Enterprise-grade hybrid financial broker utilizing transaction-style time-series 
+    storage to build proprietary historical data stores efficiently.
     """
     
     def __init__(self):
@@ -54,14 +53,6 @@ class MarketDataService:
                             return float(live_price)
         except Exception as err:
             logger.error(f"Emulated index query execution failure for {symbol}: {err}")
-            
-        try:
-            ticker = yf.Ticker(symbol)
-            val = ticker.fast_info.get('last_price')
-            if val is not None and val > 0:
-                return float(val)
-        except Exception:
-            pass
         return None
 
     async def get_live_market_price(self, symbol: str) -> float | None:
@@ -83,80 +74,65 @@ class MarketDataService:
             return None
 
     async def fetch_cached_history(self, symbol: str) -> list | None:
-        """Retrieves 30-day structural daily close profiles from Supabase local cache."""
+        """Retrieves and compiles a 30-bar array from our continuous, cumulative table rows."""
         clean_symbol = symbol.replace("/", "").strip().upper()
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                url = f"{self.db_url}?symbol=eq.{clean_symbol}&select=historical_bars"
+                # Query individual transaction rows sorted by date descending to assemble our matrix
+                url = f"{self.db_url}?symbol=eq.{clean_symbol}&order=date.desc&limit=35"
                 res = await client.get(url, headers=self.db_headers)
                 if res.status_code == 200 and res.json():
-                    return res.json()[0]["historical_bars"]
+                    # Preserves original string schema pointers to protect math calculations
+                    return [{"datetime": row["date"], "close": str(row["close"])} for row in res.json()]
             except Exception as err:
-                logger.error(f"Local Supabase data synchronization read breakdown on {clean_symbol}: {err}")
+                logger.error(f"Local Supabase transaction read breakdown on {clean_symbol}: {err}")
             return None
 
-    def _fetch_yf_history(self, symbol: str) -> list | None:
-        """Fetches historical daily bars via standard structural back-end arrays."""
-        try:
-            clean_symbol = symbol.replace("/", "").strip().upper()
-            yf_ticker = clean_symbol
-            if clean_symbol == "BTCUSD": yf_ticker = "BTC-USD"
-            elif clean_symbol == "ETHUSD": yf_ticker = "ETH-USD"
-            elif clean_symbol == "BNBUSD": yf_ticker = "BNB-USD"
+    async def sync_asset_historical_cache(self, symbol: str, force_refresh: bool = False) -> list | None:
+        """Saves daily closes into unique, cumulative historical rows without wiping anything."""
+        clean_symbol = symbol.replace("/", "").strip().upper()
+        
+        if not force_refresh:
+            existing = await self.fetch_cached_history(clean_symbol)
+            if existing and len(existing) >= 20:
+                local_today = datetime.now().strftime("%Y-%m-%d")
+                if existing[0]["datetime"] == local_today:
+                    return existing
 
+        logger.info(f"📡 Downloading candle close transaction layer for asset vector: {clean_symbol}")
+        
+        is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
+        bars = []
+        
+        if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
+            yf_ticker = "BTC-USD" if clean_symbol == "BTCUSD" else "ETH-USD" if clean_symbol == "ETHUSD" else "BNB-USD" if clean_symbol == "BNBUSD" else clean_symbol
             ticker = yf.Ticker(yf_ticker)
             hist = ticker.history(period="45d")
             if not hist.empty:
                 hist = hist.sort_index(ascending=False).head(30)
-                bars = []
                 for idx, row in hist.iterrows():
-                    bars.append({
-                        "datetime": idx.strftime("%Y-%m-%d"),
-                        "close": str(row['Close'])
-                    })
-                return bars
-        except Exception as err:
-            logger.error(f"Yahoo Finance historical download failure for {clean_symbol}: {err}")
-        return None
+                    bars.append({"symbol": clean_symbol, "date": idx.strftime("%Y-%m-%d"), "close": float(row['Close'])})
+        else:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                try:
+                    twelve_symbol = f"{clean_symbol[:3]}/{clean_symbol[3:]}"
+                    params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
+                    res = await client.get(f"{self.twelve_base}/time_series", params=params)
+                    if res.status_code == 200 and "values" in res.json():
+                        for val in res.json()["values"]:
+                            bars.append({"symbol": clean_symbol, "date": val["datetime"], "close": float(val["close"])})
+                except Exception as err:
+                    logger.error(f"Twelve Data history call crash for {clean_symbol}: {err}")
 
-    async def sync_asset_historical_cache(self, symbol: str) -> list | None:
-        """Checks Supabase first. Utilizes custom routing to separate API pipelines entirely."""
-        clean_symbol = symbol.replace("/", "").strip().upper()
-        existing_cache = await self.fetch_cached_history(clean_symbol)
-        if existing_cache and len(existing_cache) > 0:
-            return existing_cache
-
-        logger.info(f"📡 Cache Miss: Fetching fresh 30-day historical data for target: {clean_symbol}")
-        
-        is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
-        if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
-            formatted_bars = await asyncio.to_thread(self._fetch_yf_history, clean_symbol)
-            if formatted_bars:
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    payload = {"symbol": clean_symbol, "historical_bars": formatted_bars, "updated_at": datetime.utcnow().isoformat()}
-                    await client.post(self.db_url, headers=self.db_headers, json=payload)
-                return formatted_bars
-            return None
-
-        # Forex Pairs tracking fallback
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            try:
-                twelve_symbol = f"{clean_symbol[:3]}/{clean_symbol[3:]}"
-                params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
-                res = await client.get(f"{self.twelve_base}/time_series", params=params)
-                if res.status_code == 200:
-                    data = res.json()
-                    values = data.get("values")
-                    if values:
-                        payload = {"symbol": clean_symbol, "historical_bars": values, "updated_at": datetime.utcnow().isoformat()}
-                        await client.post(self.db_url, headers=self.db_headers, json=payload)
-                        return values
-            except Exception as err:
-                logger.error(f"System error updating historical tracking tables for {clean_symbol}: {err}")
-        return None
+        if bars:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # Post raw payload elements. Unique constraint safely catches overlapping dates
+                await client.post(self.db_url, headers=self.db_headers, json=bars)
+                
+        return await self.fetch_cached_history(clean_symbol)
 
     async def get_asset_report(self, symbol: str, display_name: str) -> str:
-        """Combines structural daily data with live pricing and enforces unified probabilistic bias routing."""
+        """Processes and parses our multi-row data store tables into our mathematical risk templates."""
         try:
             clean_symbol = symbol.replace("/", "").strip().upper()
             is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
@@ -170,17 +146,17 @@ class MarketDataService:
                 return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
             historical_bars = await self.fetch_cached_history(clean_symbol)
-            if not historical_bars or len(historical_bars) == 0:
-                historical_bars = await self.sync_asset_historical_cache(clean_symbol)
+            if not historical_bars or len(historical_bars) < 5:
+                historical_bars = await self.sync_asset_historical_cache(clean_symbol, force_refresh=True)
                 
             if not historical_bars or len(historical_bars) < 2:
-                return f"⚠️ **Cache Warm-up:** Building records for `{display_name}`. Try again in 5 seconds."
+                return f"⚠️ **Cache Warm-up:** Building your historical archive for `{display_name}`. Re-query in 5 seconds."
 
             latest_bar_date = historical_bars[0]["datetime"]
             target_index = 0
             
             local_today = datetime.now().strftime("%Y-%m-%d")
-            if latest_bar_date == local_today or len(historical_bars) > 1:
+            if latest_bar_date == local_today and len(historical_bars) > 1:
                 target_index = 1
                     
             prior_close = float(historical_bars[target_index]["close"])
@@ -192,12 +168,10 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # Execute mathematical path simulation
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
             prob_up = mc['prob_up']
             prob_down = mc['prob_down']
             
-            # 🧠 HARDENED DUAL-FILTER BIAS LOGIC MATRIX (Mathematical Intersection Lock)
             if prob_up > prob_down and net_change > 0:
                 direction_icon = "🟢 BULLISH BIAS"
                 trend_arrow = "📈"
@@ -207,12 +181,10 @@ class MarketDataService:
                 trend_arrow = "📉"
                 distribution_edge = f"🔴 Short Advantage ({prob_down:.1f}%)"
             elif prob_up > prob_down and net_change <= 0:
-                # Simulation indicates upside drift edge, but daily session candle is currently bearish
                 direction_icon = "🟡 CONDITIONAL BULLISH DRIFT"
                 trend_arrow = "⚡"
                 distribution_edge = f"🟡 Long Skew / Counter-Trend ({prob_up:.1f}%)"
             elif prob_down > prob_up and net_change >= 0:
-                # Simulation indicates downside drift edge, but daily session candle is currently bullish
                 direction_icon = "🟡 CONDITIONAL BEARISH DRIFT"
                 trend_arrow = "⚡"
                 distribution_edge = f"🔴 Short Skew / Counter-Trend ({prob_down:.1f}%)"
@@ -221,19 +193,12 @@ class MarketDataService:
                 trend_arrow = "⚡"
                 distribution_edge = "⚪ Balanced Distribution"
             
-            # 🛠️ HARDENED DECIMAL STRING DISPLAY FORMATTING
             is_index_or_jpy = "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol
             
-            if is_crypto:
-                # Enforce clean 2-decimal precision for crypto spot assets
-                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
-                ev_fmt = f"{mc['expected_value']:,.2f}"
-            elif is_index_or_jpy:
-                # Enforce index/jpy 2-decimal presentation format
+            if is_crypto or is_index_or_jpy:
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
                 ev_fmt = f"{mc['expected_value']:,.2f}"
             else:
-                # Standard 5-decimal precision strictly reserved for traditional fiat Forex currency pairs
                 val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
                 ev_fmt = f"{mc['expected_value']:.5f}"
                 
