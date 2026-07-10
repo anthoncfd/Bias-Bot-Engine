@@ -8,10 +8,11 @@ def create_bot() -> Application:
     """Configures persistent state instances and binds message routing paths
     using a unified institutional catch-all handler configuration matrix.
     """
-    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    # 🔐 ENFORCED ASYNC ENTRY TOKEN: Track strictly against your verified environment key
+    token = os.getenv("TELEGRAM_TOKEN")
     if not token:
-        logger.critical("❌ Missing critical configuration: TELEGRAM_BOT_TOKEN environment variable is unset.")
-        raise ValueError("TELEGRAM_BOT_TOKEN environment variable must be specified.")
+        logger.critical("❌ Missing critical configuration: TELEGRAM_TOKEN environment variable is unset.")
+        raise ValueError("TELEGRAM_TOKEN environment variable must be specified.")
 
     app = Application.builder().token(token).build()
     
