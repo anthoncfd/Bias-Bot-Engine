@@ -91,11 +91,11 @@ class MarketDataService:
         clean_symbol = symbol.replace("/", "").strip().upper()
         existing = await self.fetch_cached_history(clean_symbol)
         
-        # Calculate localized system dates
+        # Calculate dynamic date frameworks
         local_today = datetime.now().strftime("%Y-%m-%d")
         local_yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
         
-        # 🛡️ SYSTEM DATA SHIELD: Skip upstream vendors if local database storage layer is perfectly fresh
+        # 🛡️ SYSTEM DATA SHIELD: Skip upstream vendors if local database is perfectly fresh
         if not force_refresh and existing and len(existing) >= 20:
             if existing[0]["datetime"] in [local_today, local_yesterday]:
                 return existing
@@ -104,9 +104,9 @@ class MarketDataService:
         is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
         bars = []
         
-        # 🛠️ DELTA OPTIMIZATION: If data exists but needs an update, fetch only the single latest day
-        fetch_period = "45d" if (not existing or len(existing) < 5 or force_refresh) else "3d"
-        twelve_output_size = "30" if (not existing or len(existing) < 5 or force_refresh) else "3"
+        # 🛠️ WINDOW EXPANSION PATCH: Pull a 5-day lookback window during daily updates to prevent candle skipping
+        fetch_period = "45d" if (not existing or len(existing) < 5 or force_refresh) else "5d"
+        twelve_output_size = "30" if (not existing or len(existing) < 5 or force_refresh) else "5"
 
         if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
             yf_ticker = "BTC-USD" if clean_symbol == "BTCUSD" else "ETH-USD" if clean_symbol == "ETHUSD" else "BNB-USD" if clean_symbol == "BNBUSD" else clean_symbol
@@ -114,9 +114,9 @@ class MarketDataService:
             hist = ticker.history(period=fetch_period)
             if not hist.empty:
                 hist = hist.sort_index(ascending=False)
-                # For standard updates, safely slice only the single newest candle bar
-                if fetch_period == "3d":
-                    hist = hist.head(1)
+                # Keep the top 3 rows during updates to ensure yesterday's settled close is fully captured
+                if fetch_period == "5d":
+                    hist = hist.head(3)
                 for idx, row in hist.iterrows():
                     bars.append({"symbol": clean_symbol, "date": idx.strftime("%Y-%m-%d"), "close": float(row['Close'])})
         else:
@@ -127,8 +127,8 @@ class MarketDataService:
                     res = await client.get(f"{self.twelve_base}/time_series", params=params)
                     if res.status_code == 200 and "values" in res.json():
                         values_payload = res.json()["values"]
-                        if fetch_period == "3d" and values_payload:
-                            values_payload = [values_payload[0]]
+                        if fetch_period == "5d" and values_payload:
+                            values_payload = values_payload[:3]
                         for val in values_payload:
                             bars.append({"symbol": clean_symbol, "date": val["datetime"], "close": float(val["close"])})
                 except Exception as err:
@@ -162,15 +162,40 @@ class MarketDataService:
             if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Warm-up:** Building your historical archive for `{display_name}`. Re-query in 5 seconds."
 
-            # 🧠 HARDENED PREVIOUS CLOSE CALCULATOR
+            # 🧠 HARDENED PREVIOUS CLOSE CALCULATOR WITH LIVE GAP-FILLING
             local_today = datetime.now().strftime("%Y-%m-%d")
             prior_close = None
+            has_yesterday = False
+            local_yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
             
+            # 1. Scan the database bars to locate yesterday's true candle close
             for bar in historical_bars:
-                if bar["datetime"] < local_today:
+                if bar["datetime"] == local_yesterday:
                     prior_close = float(bar["close"])
+                    has_yesterday = True
                     break
-                    
+                elif bar["datetime"] < local_today and prior_close is None:
+                    prior_close = float(bar["close"])
+
+            # 2. 🛡️ GAP PROTECTION: Fallback to a live quote endpoint if there is a vendor rollover delay
+            if not has_yesterday:
+                logger.warning(f"⚠️ Gap detected! Yesterday ({local_yesterday}) missing for {clean_symbol}. Pulling live quote fallback...")
+                try:
+                    if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
+                        yf_ticker = "BTC-USD" if clean_symbol == "BTCUSD" else "ETH-USD" if clean_symbol == "ETHUSD" else "BNB-USD" if clean_symbol == "BNBUSD" else clean_symbol
+                        ticker = yf.Ticker(yf_ticker)
+                        live_info = ticker.info
+                        if "previousClose" in live_info and live_info["previousClose"]:
+                            prior_close = float(live_info["previousClose"])
+                    else:
+                        async with httpx.AsyncClient(timeout=10.0) as client:
+                            twelve_symbol = f"{clean_symbol[:3]}/{clean_symbol[3:]}"
+                            res = await client.get(f"{self.twelve_base}/quote", params={"symbol": twelve_symbol, "apikey": settings.market_api_key})
+                            if res.status_code == 200 and "previous_close" in res.json():
+                                prior_close = float(res.json()["previous_close"])
+                except Exception as gap_err:
+                    logger.error(f"Failed to fill historical gap live for {clean_symbol}: {gap_err}")
+
             if prior_close is None:
                 prior_close = float(historical_bars[0]["close"])
 
