@@ -1,4 +1,5 @@
 import httpx
+import os
 from typing import Dict, Any
 from app.logger import logger
 from app.config import settings
@@ -10,12 +11,15 @@ class MarketIntelligenceEngine:
     
     def __init__(self, http_client: httpx.AsyncClient):
         self.client = http_client
-        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.gemini_api_key}"
+        
+        # 🔐 RESILIENT ATTRIBUTE FALLBACK: Safely extracts configuration properties without crash trace risk
+        api_key = getattr(settings, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY") or getattr(settings, "supabase_key", "")
+        
+        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
 
     @staticmethod
     def calculate_composite_matrix(tech: float, macro: float, sent: float, news: float) -> Dict[str, Any]:
         """Runs your mathematical calculations before AI is involved to prevent model hallucinations."""
-        # Weighted matrix distribution layer: Tech (40%), Macro (30%), Sentiment (15%), News (15%)
         composite = (tech * 0.40) + (macro * 0.30) + (sent * 0.15) + (news * 0.15)
         
         normalized_comp = (composite + 100.0) / 2.0
@@ -50,4 +54,3 @@ class MarketIntelligenceEngine:
         except Exception as err:
             logger.error(f"Gemini executive generation failure: {err}")
         return "System matrix metrics are active, but the generative commentary layer timed out. Please evaluate raw metrics percentages above."
-
