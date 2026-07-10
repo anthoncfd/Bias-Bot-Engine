@@ -78,11 +78,9 @@ class MarketDataService:
         clean_symbol = symbol.replace("/", "").strip().upper()
         async with httpx.AsyncClient(timeout=10.0) as client:
             try:
-                # Query individual transaction rows sorted by date descending to assemble our matrix
                 url = f"{self.db_url}?symbol=eq.{clean_symbol}&order=date.desc&limit=35"
                 res = await client.get(url, headers=self.db_headers)
                 if res.status_code == 200 and res.json():
-                    # Preserves original string schema pointers to protect math calculations
                     return [{"datetime": row["date"], "close": str(row["close"])} for row in res.json()]
             except Exception as err:
                 logger.error(f"Local Supabase transaction read breakdown on {clean_symbol}: {err}")
@@ -95,12 +93,9 @@ class MarketDataService:
         if not force_refresh:
             existing = await self.fetch_cached_history(clean_symbol)
             if existing and len(existing) >= 20:
-                local_today = datetime.now().strftime("%Y-%m-%d")
-                if existing[0]["datetime"] == local_today:
-                    return existing
+                return existing
 
         logger.info(f"📡 Downloading candle close transaction layer for asset vector: {clean_symbol}")
-        
         is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
         bars = []
         
@@ -126,7 +121,6 @@ class MarketDataService:
 
         if bars:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                # Post raw payload elements. Unique constraint safely catches overlapping dates
                 await client.post(self.db_url, headers=self.db_headers, json=bars)
                 
         return await self.fetch_cached_history(clean_symbol)
@@ -146,24 +140,26 @@ class MarketDataService:
                 return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
             historical_bars = await self.fetch_cached_history(clean_symbol)
-            if not historical_bars or len(historical_bars) < 5:
+            if not historical_bars or len(historical_bars) < 20:
+                logger.info(f"🔄 JIT Activation: Re-building background lookbacks on-demand for {clean_symbol}")
                 historical_bars = await self.sync_asset_historical_cache(clean_symbol, force_refresh=True)
                 
             if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Warm-up:** Building your historical archive for `{display_name}`. Re-query in 5 seconds."
 
-            latest_bar_date = historical_bars[0]["datetime"]
-            target_index = 0
-            
+            # 🧠 HARDENED PREVIOUS CLOSE CALCULATOR
+            # Locate the absolute newest candle whose date timestamp is strictly less than today's live calendar date
             local_today = datetime.now().strftime("%Y-%m-%d")
-            if latest_bar_date == local_today and len(historical_bars) > 1:
-                target_index = 1
-                    
-            prior_close = float(historical_bars[target_index]["close"])
+            prior_close = None
             
-            if abs(live_price - prior_close) < 0.00001 and len(historical_bars) > target_index + 1:
-                target_index += 1
-                prior_close = float(historical_bars[target_index]["close"])
+            for bar in historical_bars:
+                if bar["datetime"] < local_today:
+                    prior_close = float(bar["close"])
+                    break
+                    
+            # Safe historical fallback trap using correct Python syntax
+            if prior_close is None:
+                prior_close = float(historical_bars[0]["close"])
 
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
