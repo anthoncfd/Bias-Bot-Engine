@@ -1,7 +1,8 @@
 import os
 import sys
 import asyncio
-from datetime import datetime
+import httpx
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from app.config import settings
@@ -9,30 +10,34 @@ from app.logger import logger
 from app.bot.bot import create_bot
 from app.services.market_data import MarketDataService
 
+# Create a single, persistent, global async HTTP client pool instance
+global_http_client = httpx.AsyncClient(
+    timeout=httpx.Timeout(10.0, connect=5.0),
+    limits=httpx.Limits(max_connections=50, max_keepalive_connections=10)
+)
+
 async def warm_historical_cache_layer():
     """Loops through asset trackers on bootup using strict rate-safe pacing to check baseline data."""
     try:
-        # Standard, safe, non-blocking async sleep initialization anchor
         await asyncio.sleep(5)
-        
         is_github_ci = os.getenv("GITHUB_ACTIONS") == "true"
         
         if is_github_ci:
             logger.info("🧪 GitHub Actions environment detected. Checking free Yahoo Finance assets...")
-            sync_symbols = ["YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"]
+            sync_symbols = ["YM=F", "^N225", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"]
         else:
             logger.info("📡 Production Server Initialization: Checking baseline database status...")
             sync_symbols = [
                 "EURUSD", "GBPUSD", "GBPJPY", "USDCAD", 
                 "USDCHF", "AUDUSD", "EURJPY", "EURGBP", 
-                "YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
+                "YM=F", "^N225", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
             ]
             
-        service = MarketDataService()
+        # Pass the global client pool directly into the service lifecycle
+        service = MarketDataService(http_client=global_http_client)
         
         for index, symbol in enumerate(sync_symbols, start=1):
             logger.info(f"🔄 Baseline Check [{index}/{len(sync_symbols)}]: Verifying structural data for {symbol}")
-            # force_refresh=False checks if rows exist before spending API credits
             await service.sync_asset_historical_cache(symbol, force_refresh=False)
             
             is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
@@ -55,12 +60,11 @@ async def lifespan(app: FastAPI):
     if os.getenv("GITHUB_ACTIONS") == "true":
         await warm_historical_cache_layer()
         logger.info("✅ GitHub Actions environment validation complete. Terminating with exit code 0.")
+        await global_http_client.aclose()
         sys.exit(0)
         
-    # Production Track: Detach cache checking loop to run smoothly on background worker lines
     asyncio.create_task(warm_historical_cache_layer())
     
-    # Clean Lifespan Bind: Link the bot smoothly into the active Uvicorn loop
     logger.info("Connecting and synchronizing live Telegram network sockets...")
     await telegram_app.initialize()
     await telegram_app.start()
@@ -73,6 +77,9 @@ async def lifespan(app: FastAPI):
     await telegram_app.updater.stop()
     await telegram_app.stop()
     await telegram_app.shutdown()
+    
+    # Gracefully disconnect and clean up connection pool sockets on shutdown
+    await global_http_client.aclose()
     logger.info("Ecosystem internal bot engines cleanly shut down.")
 
 app = FastAPI(
@@ -82,32 +89,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ⏰ AUTOMATED CRON ROLLOVER ENDPOINT
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
 @app.get("/api/v3/macro-engine/utc-rollover-sync", tags=["Data Automation Engine"])
 async def force_utc_day_rollover_synchronizer(secret_token: str | None = None):
-    """Secure automation hook executed at 00:05 UTC. 
-
-    Bypasses cache check to append the newly closed daily session candle into a new Supabase row.
-    """
+    """Secure automation hook executed at 00:05 UTC via cron-job.org."""
     if not secret_token or secret_token != settings.supabase_key[:10]:
         raise HTTPException(status_code=401, detail="Invalid execution secret token context.")
         
     logger.info("📅 00:05 UTC Day Rollover Triggered: Appending closed daily candle transactions...")
-    service = MarketDataService()
+    
+    # Use the same shared persistent global pool instance to avoid credit-burning leaks
+    service = MarketDataService(http_client=global_http_client)
     
     sync_symbols = [
         "EURUSD", "GBPUSD", "GBPJPY", "USDCAD", 
         "USDCHF", "AUDUSD", "EURJPY", "EURGBP", 
-        "YM=F", "NKD=F", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
+        "YM=F", "^N225", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
     ]
     
     for index, symbol in enumerate(sync_symbols, start=1):
         try:
             logger.info(f"🔄 Rollover Sync [{index}/{len(sync_symbols)}]: Appending fresh close row for {symbol}")
-            # force_refresh=True ensures data vendors are hit, saving a new transactional slice row
             await service.sync_asset_historical_cache(symbol, force_refresh=True)
             
             is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
@@ -116,17 +117,13 @@ async def force_utc_day_rollover_synchronizer(secret_token: str | None = None):
             logger.error(f"Failed to append daily rollover close for target {symbol}: {e}")
             
     logger.info("✅ Database historical rows are successfully synchronized for the new trading session.")
-    return {"status": "synchronized", "timestamp": datetime.utcnow().isoformat()}
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🩺 INFRASTRUCTURE MONITORING ROUTER
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    return {"status": "synchronized", "timestamp": datetime.now(timezone.utc).isoformat()}
 
 @app.get("/health", tags=["System Infrastructure"])
 async def system_health_check():
     return {
         "status": "operational", 
-        "app_name": settings.settings.app_name,
+        "app_name": settings.app_name,
         "version": settings.app_version,
         "engine_mode": "Production" if not settings.debug else "Development"
     }
