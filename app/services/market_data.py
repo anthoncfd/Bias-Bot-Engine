@@ -28,8 +28,6 @@ class MarketDataService:
         self.browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        
-        # 🛡️ CONNECTION POOL OPTIMIZATION: Fallback to context client to stop socket starvation
         self.client = http_client if http_client is not None else httpx.AsyncClient(timeout=10.0)
 
     def _normalize_symbol(self, symbol: str) -> str:
@@ -104,10 +102,10 @@ class MarketDataService:
         return None
 
     async def fetch_cached_history(self, symbol: str) -> Optional[List[Dict[str, str]]]:
-        """Retrieves and compiles a 35-bar array cleanly from our continuous database rows."""
+        """Retrieves and compiles an expanded 65-bar array cleanly from our continuous database rows."""
         clean_symbol = self._normalize_symbol(symbol)
         try:
-            url = f"{self.db_url}?symbol=eq.{clean_symbol}&order=date.desc&limit=35"
+            url = f"{self.db_url}?symbol=eq.{clean_symbol}&order=date.desc&limit=65"
             res = await self.client.get(url, headers=self.db_headers)
             if res.status_code == 200 and res.json():
                 return [{"datetime": row["date"], "close": str(row["close"])} for row in res.json()]
@@ -121,28 +119,24 @@ class MarketDataService:
         existing = await self.fetch_cached_history(clean_symbol)
         asset_class = self._get_asset_class_route(clean_symbol)
         
-        # 🌍 STABILIZED TIMEZONE ANCHOR: Enforce global UTC to align database dates with vendor endpoints
         utc_now = datetime.now(timezone.utc)
         utc_today = utc_now.strftime("%Y-%m-%d")
         utc_yesterday = (utc_now - timedelta(days=1)).strftime("%Y-%m-%d")
         
-        # 🛡️ COOLDOWN GUARD: Block outbound API connection usage if database cache is completely fresh
-        if not force_refresh and existing and len(existing) >= 20:
+        if not force_refresh and existing and len(existing) >= 50:
             if existing[0]["datetime"] in [utc_today, utc_yesterday]:
                 return existing
 
         logger.info(f"📡 Synchronization Lock Released: Updating historical tables for {clean_symbol}")
         bars = []
         
-        # Dynamic lookback slicing configuration based on active cache health
-        is_empty_cache = not existing or len(existing) < 5 or force_refresh
-        fetch_period = "45d" if is_empty_cache else "5d"
-        twelve_output_size = "30" if is_empty_cache else "5"
+        is_empty_cache = not existing or len(existing) < 45 or force_refresh
+        fetch_period = "90d" if is_empty_cache else "5d"
+        twelve_output_size = "60" if is_empty_cache else "5"
 
         if asset_class in ["CRYPTO", "INDEX_FUTURE"]:
             yf_ticker = "BTC-USD" if clean_symbol == "BTCUSD" else "ETH-USD" if clean_symbol == "ETHUSD" else "BNB-USD" if clean_symbol == "BNBUSD" else clean_symbol
             ticker = yf.Ticker(yf_ticker)
-            # Run blocking I/O loop thread safely in executor context
             hist = await asyncio.to_thread(ticker.history, period=fetch_period)
             if not hist.empty:
                 hist = hist.sort_index(ascending=False)
@@ -183,13 +177,12 @@ class MarketDataService:
                 return f"⚠️ **Data Fetch Error:** Unable to retrieve real-time data ticks for `{display_name}`."
 
             historical_bars = await self.fetch_cached_history(clean_symbol)
-            if not historical_bars or len(historical_bars) < 15:
+            if not historical_bars or len(historical_bars) < 45:
                 historical_bars = await self.sync_asset_historical_cache(clean_symbol, force_refresh=False)
                 
             if not historical_bars or len(historical_bars) < 2:
                 return f"⚠️ **Cache Warm-up:** Building your historical archive for `{display_name}`. Re-query in 5 seconds."
 
-            # 🌍 STANDARD TIMEZONE ANCHOR
             utc_now = datetime.now(timezone.utc)
             utc_today = utc_now.strftime("%Y-%m-%d")
             utc_yesterday = (utc_now - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -197,7 +190,6 @@ class MarketDataService:
             prior_close = None
             has_yesterday = False
             
-            # 🏎️ $O(1)$ SCANNED SEARCH ACCESS (Optimized for date-descending indexed data blocks)
             if historical_bars[0]["datetime"] == utc_yesterday:
                 prior_close = float(historical_bars[0]["close"])
                 has_yesterday = True
@@ -205,7 +197,6 @@ class MarketDataService:
                 prior_close = float(historical_bars[1]["close"])
                 has_yesterday = True
             else:
-                # O(N) Fallback loop scanning sequence if gap condition requires evaluation
                 for bar in historical_bars:
                     if bar["datetime"] == utc_yesterday:
                         prior_close = float(bar["close"])
@@ -214,7 +205,6 @@ class MarketDataService:
                     elif bar["datetime"] < utc_today and prior_close is None:
                         prior_close = float(bar["close"])
 
-            # 🛡️ CREDIT-SAFE SINGLE QUOTE FALLBACK GAP FILLING
             if not has_yesterday:
                 try:
                     if asset_class in ["CRYPTO", "INDEX_FUTURE"]:
@@ -234,22 +224,19 @@ class MarketDataService:
                 except Exception as gap_err:
                     logger.error(f"Failed to fill historical gap live for {clean_symbol}: {gap_err}")
 
-            # Safe database absolute baseline fallback
             if prior_close is None:
                 prior_close = float(historical_bars[0]["close"])
 
-            # Prevent zero-division calculation crashes
             if prior_close == 0:
-                return f"❌ **Data Contamination:** Absolute previous close for `{display_name}` processed as zero. Halting equations."
+                return f"❌ **Data Contamination:** Absolute previous close processed as zero. Halting calculations."
 
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
+            # 🧠 RUN MATRICES NATIVELY PASSING THE LIVE INTRA-DAY PRICE INTERPOLATION
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
-            prob_up = mc['prob_up']
-            prob_down = mc['prob_down']
+            tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price)
             
-            # 🎨 HIGH-END VISUAL PRESENTER DECOUPLING
             return AssetReportPresenter.render(
                 display_name=display_name,
                 clean_symbol=clean_symbol,
@@ -259,14 +246,12 @@ class MarketDataService:
                 net_change=net_change,
                 change_pct=change_pct,
                 mc_data=mc,
-                prob_up=prob_up,
-                prob_down=prob_down
+                tech_data=tech
             )
             
         except Exception as err:
             logger.critical(f"Schema compilation exception parsing metrics block for {clean_symbol}: {err}", exc_info=True)
             return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
-
 
 class AssetReportPresenter:
     """Dedicated presentation formatting layer decoupling business engine calculation logic
@@ -276,8 +261,10 @@ class AssetReportPresenter:
     @staticmethod
     def render(display_name: str, clean_symbol: str, asset_class: str, live_price: float, 
                prior_close: float, net_change: float, change_pct: float, mc_data: dict, 
-               prob_up: float, prob_down: float) -> str:
+               tech_data: dict) -> str:
         """Assembles variables into production-ready scannable Markdown data blocks."""
+        prob_up = mc_data['prob_up']
+        prob_down = mc_data['prob_down']
         
         if prob_up > prob_down and net_change > 0:
             direction_icon, trend_arrow, distribution_edge = "🟢 BULLISH BIAS", "📈", f"🟢 Long Advantage ({prob_up:.1f}%)"
@@ -308,8 +295,8 @@ class AssetReportPresenter:
             f"• **Previous Close:** `{cls_fmt}`\n"
             f"• **Net Deviation:** `{chg_fmt}` (`{change_pct:+.2f}%`)\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"🎲 **MONTE CARLO SESSION PROBABILITIES**\n"
-            f"• **Simulated Expected Value:** `{ev_fmt}`\n"
+            f"📊 **Technical Score Matrix:** `{tech_data['technical_score_pct']:+.1f}%` Condition\n"
+            f"🎲 **Monte Carlo Expected Value:** `{ev_fmt}`\n"
             f"• **Historical Period Volatility:** `{mc_data['sigma_pct']:.2f}%`\n"
             f"• **Distribution Edge:** `{distribution_edge}`\n"
             f"• **Fractional Kelly Capital Allocation:** {kelly_str}\n"
