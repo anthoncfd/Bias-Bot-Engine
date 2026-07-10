@@ -15,10 +15,10 @@ class NewsIntelligenceEngine:
     def __init__(self, http_client: httpx.AsyncClient):
         self.client = http_client
         
-        # 🔐 RESILIENT ATTRIBUTE FALLBACK: Safely checks for custom api settings or looks up environment directly
-        api_key = getattr(settings, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY") or getattr(settings, "supabase_key", "")
+        # 🔐 SYSTEM TOKEN ROUTING MATRIX
+        self.api_key = os.getenv("GEMINI_API_KEY") or getattr(settings, "supabase_key", "") or getattr(settings, "market_api_key", "")
         
-        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={self.api_key}"
         self.browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -69,12 +69,17 @@ class NewsIntelligenceEngine:
         try:
             payload = {"contents": [{"parts": [{"text": prompt}]}]}
             res = await self.client.post(self.gemini_url, json=payload, timeout=10.0)
+            
             if res.status_code == 200:
                 raw_text = res.json()["candidates"][0]["content"]["parts"][0]["text"]
                 clean_json = re.sub(r"```json\s*|\s*```", "", raw_text).strip()
                 return json.loads(clean_json)
+            else:
+                logger.error(f"⚠️ Gemini Sentiment Analysis rejection: Status {res.status_code} | Payload: {res.text}")
+                
         except Exception as err:
             logger.error(f"Gemini multi-source content evaluation error: {err}")
+            
         return {"direction": "NEUTRAL", "confidence": 0.5}
 
     async def generate_news_confluence_score(self, symbol: str) -> float:
