@@ -20,9 +20,7 @@ class QuantitativeMathEngine:
 
     @staticmethod
     def calculate_technical_indicators(historical_bars: List[Dict[str, Any]], live_price: float, asset_class: str) -> Dict[str, Any]:
-        """Calculates institutional indicators and executes multi-factor confluence signaling 
-        dynamically adjusted for asset-class volatility thresholds.
-        """
+        """Calculates institutional indicators and executes dynamic volatility-normalized confluence signaling."""
         try:
             closes = QuantitativeMathEngine._extract_vectorized_closes(historical_bars, live_price)
             n_bars = len(closes)
@@ -36,19 +34,19 @@ class QuantitativeMathEngine:
             sma_20 = float(np.mean(closes[-sma_20_len:]))
             sma_50 = float(np.mean(closes[-sma_50_len:]))
 
-            # 2. Closing Volatility Range (CVR)
+            # 2. Closing Volatility Range (CVR) - Realized 14-period daily historical variance
             if n_bars > 1:
                 cvr_window = min(14, n_bars - 1)
                 close_diffs = np.abs(np.diff(closes))
                 cvr = float(np.mean(close_diffs[-cvr_window:]))
             else:
-                cvr = 0.0
+                cvr = 0.0001  # Safe denominator configuration protection
 
             # 3. Momentum
             mom_window = min(10, n_bars - 1)
             momentum = float(closes[-1] - closes[-1 - mom_window])
 
-            # 4. Trend Slope (OLS Linear Regression)
+            # 4. Trend Slope (OLS Linear Regression Gradient)
             slope_window = min(14, n_bars)
             if slope_window > 1:
                 y = closes[-slope_window:]
@@ -57,7 +55,7 @@ class QuantitativeMathEngine:
             else:
                 slope = 0.0
 
-            # 5. Z-Score
+            # 5. Z-Score (Standardized deviation distance from the short-term mean)
             z_window = min(20, n_bars)
             if z_window > 1:
                 window_mean = np.mean(closes[-z_window:])
@@ -66,7 +64,7 @@ class QuantitativeMathEngine:
             else:
                 z_score = 0.0
 
-            # 6. Technical Score Normalization
+            # 6. Quantitative Technical Score Normalization Layer
             tech_score = 0.0
             if sma_20 > sma_50: tech_score += 0.20
             else: tech_score -= 0.20
@@ -79,33 +77,49 @@ class QuantitativeMathEngine:
             tech_score += (z_bounded / 2.0) * 0.30
             tech_score_pct = float(tech_score * 100)
 
-            # ━━━━ 🏛️ STRATIFIED CONFLUENCE ENGINE ROUTER ━━━━
-            # Adjust sensitivity boundaries based on real-world asset class behavior
-            barrier = 15.0 if asset_class == "FOREX" else 35.0
+            # ━━━━ 🏛️ VOLATILITY-NORMALIZED CONFLUENCE FILTER ━━━━
+            # Instead of guessing hardcoded figures, evaluate the intraday net change against the 14-day CVR
             net_change = live_price - float(historical_bars[0]["close"])
+            
+            # Mathematically derive the noise score profile (Intraday Sigma Deviation)
+            intraday_noise_z = abs(net_change) / cvr if cvr > 0 else 0.0
+            is_noise = intraday_noise_z < 0.20  # Under 0.2 Sigma represents raw inside consolidation noise
+            
+            # Asset class adaptive breakout thresholds
+            barrier = 15.0 if asset_class == "FOREX" else 30.0
 
             if tech_score_pct > barrier:
-                if net_change >= 0:
+                if is_noise:
+                    bias_state = "BULLISH_CONSOLIDATION"
+                    display_text = "🟢 STRUCTURAL BULLISH (INTRADAY CONSOLIDATION)"
+                    icon = "📈"
+                elif net_change > 0:
                     bias_state = "STRONGLY_BULLISH"
                     display_text = "🟢 STRONGLY BULLISH BIAS"
-                    icon = "📈"
+                    icon = "🚀"
                 else:
                     bias_state = "BULLISH_RETRACEMENT"
                     display_text = "🟡 BULLISH RETRACEMENT (DIP BUYING ZONE)"
                     icon = "⚡"
+                    
             elif tech_score_pct < -barrier:
-                if net_change <= 0:
+                if is_noise:
+                    bias_state = "BEARISH_CONSOLIDATION"
+                    display_text = "🔴 STRUCTURAL BEARISH (INTRADAY CONSOLIDATION)"
+                    icon = "📉"
+                elif net_change < 0:
                     bias_state = "STRONGLY_BEARISH"
                     display_text = "🔴 STRONGLY BEARISH BIAS"
-                    icon = "📉"
+                    icon = "💥"
                 else:
                     bias_state = "BEARISH_RECOVERY"
                     display_text = "🟡 BEARISH RECOVERY (RALLY SELLING ZONE)"
                     icon = "⚡"
+                    
             else:
                 bias_state = "NEUTRAL"
-                display_text = "⚪ NEUTRAL MEAN REVERSION BLOCK"
-                icon = "⚖️"
+                display_text = "培育 NEUTRAL MEAN REVERSION BLOCK"
+                icon = "秤️"
 
             return {
                 "sma_20": sma_20,
