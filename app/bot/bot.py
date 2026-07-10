@@ -1,49 +1,29 @@
-import asyncio
-from telegram.ext import Application, CommandHandler
-from app.config import settings
-from app.bot import handlers
+import os
+import re
+from telegram.ext import Application, CommandHandler, MessageHandler, filters
+from app.bot.handlers import handle_market_query, start_handler
 from app.logger import logger
 
 def create_bot() -> Application:
-    """Enterprise configuration factory that builds the python-telegram-bot application state
-    and binds matching controller routers precisely.
+    """Configures persistent state instances and binds message routing paths
+    using a unified institutional catch-all handler configuration matrix.
     """
-    # Initialize the core PTB framework engine using the configured Telegram bot token
-    application = Application.builder().token(settings.telegram_bot_token).build()
+    token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not token:
+        logger.critical("❌ Missing critical configuration: TELEGRAM_BOT_TOKEN environment variable is unset.")
+        raise ValueError("TELEGRAM_BOT_TOKEN environment variable must be specified.")
+
+    app = Application.builder().token(token).build()
     
-    # ⚙️ GLOBAL UTILITY COMMAND ROUTES
-    application.add_handler(CommandHandler("start", handlers.start_handler))
+    # ━━━━ 🏛️ UNIFIED MULTI-ENTRY ROUTER MATRIX ━━━━
+    # Route onboarding commands to the dedicated startup message handler
+    app.add_handler(CommandHandler("start", start_handler))
     
-    # 💱 FOREX TELEMETRY HANDLER ROUTES
-    application.add_handler(CommandHandler("eurusd", handlers.eurusd_handler))
-    application.add_handler(CommandHandler("gbpusd", handlers.gbpusd_handler))
-    application.add_handler(CommandHandler("gbpjpy", handlers.gbpjpy_handler))
-    application.add_handler(CommandHandler("usdcad", handlers.usdcad_handler))
-    application.add_handler(CommandHandler("usdchf", handlers.usdchf_handler))
-    application.add_handler(CommandHandler("audusd", handlers.audusd_handler))
-    application.add_handler(CommandHandler("eurjpy", handlers.eurjpy_handler))
-    application.add_handler(CommandHandler("eurgbp", handlers.eurgbp_handler))
+    # Catch any remaining slash commands dynamically via unified regex pattern configurations
+    app.add_handler(CommandHandler(re.compile(r'.*'), handle_market_query))
     
-    # 📈 FUTURES & CFD STOCK INDEX HANDLER ROUTES
-    application.add_handler(CommandHandler("us30", handlers.us30_handler))
-    application.add_handler(CommandHandler("nas100", handlers.nas100_handler))
-    application.add_handler(CommandHandler("jp225", handlers.jp225_handler))
-    
-    # 🪙 CRYPTOCURRENCY MULTI-VECTORS SPOT HANDLER ROUTES
-    application.add_handler(CommandHandler("btcusd", handlers.btcusd_handler))
-    application.add_handler(CommandHandler("ethusd", handlers.ethusd_handler))
-    application.add_handler(CommandHandler("bnbusd", handlers.bnbusd_handler))
+    # Route text inputs that omit slashes cleanly into the same validation loop
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_market_query))
     
     logger.info("🤖 Telegram systematic routing handlers bound to execution context successfully.")
-    return application
-
-if __name__ == "__main__":
-    # NATIVE ISOLATED BACKEND RUNNER RUN TRACK:
-    # This block allows you to manually run the bot as a pure, standalone console script 
-    # if you ever decide to isolate it completely away from the FastAPI web framework.
-    bot_instance = create_bot()
-    logger.info("🚀 Launching standalone background long-polling engine layer...")
-    
-    # drop_pending_updates=True guarantees that the bot instantly drops the backlog
-    # of messages sent while it was offline, preventing an endless queue flooding loop.
-    bot_instance.run_polling(drop_pending_updates=True)
+    return app
