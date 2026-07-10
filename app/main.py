@@ -40,7 +40,7 @@ async def warm_historical_cache_layer():
             await service.sync_asset_historical_cache(symbol, force_refresh=False)
             
             is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
-            # Hardened startup pacing to protect API endpoints
+            # 🛡️ HARDENED STARTUP PACING: Protect Twelve Data limit boundaries during deep table scans
             sleep_duration = 15 if (is_forex and not is_github_ci) else 5
             await asyncio.sleep(sleep_duration)
             
@@ -108,8 +108,8 @@ async def force_utc_day_rollover_synchronizer(secret_token: str | None = None):
             logger.info(f"🔄 Rollover Sync [{index}/{len(sync_symbols)}]: Appending fresh close row for {symbol}")
             await service.sync_asset_historical_cache(symbol, force_refresh=True)
             
-            # 🛡️ RATE LIMIT SHIELD: Standardize a strict 15-second delay between assets
-            # This completely prevents "429 Too Many Requests" errors across all plans
+            # 🛡️ SYSTEM INTEGRITY SHIELD: Enforce a fixed 15-second delay between tasks
+            # This accounts for the new 60-bar lookback request payload and blocks 429 timeouts completely
             await asyncio.sleep(15)
             
         except Exception as e:
