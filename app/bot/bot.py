@@ -1,14 +1,12 @@
 import os
-import re
 from telegram.ext import Application, CommandHandler, MessageHandler, filters
 from app.bot.handlers import handle_market_query, start_handler
 from app.logger import logger
 
 def create_bot() -> Application:
     """Configures persistent state instances and binds message routing paths
-    using a unified institutional catch-all handler configuration matrix.
+    using a framework-compliant unified catch-all logic flow map.
     """
-    # 🔐 ENFORCED ASYNC ENTRY TOKEN: Track strictly against your verified environment key
     token = os.getenv("TELEGRAM_TOKEN")
     if not token:
         logger.critical("❌ Missing critical configuration: TELEGRAM_TOKEN environment variable is unset.")
@@ -16,14 +14,16 @@ def create_bot() -> Application:
 
     app = Application.builder().token(token).build()
     
-    # ━━━━ 🏛️ UNIFIED MULTI-ENTRY ROUTER MATRIX ━━━━
-    # Route onboarding commands to the dedicated startup message handler
+    # ━━━━ 🏛️ FRAMEWORK-COMPLIANT MULTI-ENTRY ROUTER MATRIX ━━━━
+    
+    # Handler 1: Explicitly trap the primary onboarding command sequence first
     app.add_handler(CommandHandler("start", start_handler))
     
-    # Catch any remaining slash commands dynamically via unified regex pattern configurations
-    app.add_handler(CommandHandler(re.compile(r'.*'), handle_market_query))
+    # Handler 2: Catch ALL other slash commands dynamically using a framework Command Filter
+    # This replaces the broken regex CommandHandler completely and routes safely without TypeError risk
+    app.add_handler(MessageHandler(filters.COMMAND, handle_market_query))
     
-    # Route text inputs that omit slashes cleanly into the same validation loop
+    # Handler 3: Route text inputs that omit slashes cleanly into the same validation loop
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_market_query))
     
     logger.info("🤖 Telegram systematic routing handlers bound to execution context successfully.")
