@@ -1,110 +1,56 @@
-import httpx
+import re
+from typing import Dict, Any
 from telegram import Update
 from telegram.ext import ContextTypes
 from app.logger import logger
 from app.services.market_data import MarketDataService
 
-# Initialize our enterprise data broker layer
-market_service = MarketDataService()
+# 🏛️ CENTRAL SYSTEM ASSET REGISTRY
+SUPPORTED_ASSETS: Dict[str, str] = {
+    "EURUSD": "EUR/USD",
+    "GBPUSD": "GBP/USD",
+    "GBPJPY": "GBP/JPY",
+    "USDCAD": "USD/CAD",
+    "USDCHF": "USD/CHF",
+    "AUDUSD": "AUD/USD",
+    "EURJPY": "EUR/JPY",
+    "EURGBP": "EUR/GBP",
+    "YM=F": "US30 (Dow Jones)",
+    "NQ=F": "NAS100 (Nasdaq)",
+    "NKD=F": "JP225 (Nikkei)",
+    "BTCUSD": "BTCUSD",
+    "ETHUSD": "ETHUSD",
+    "BNBUSD": "BNBUSD"
+}
 
-async def process_and_send_report(update: Update, symbol: str, display_name: str):
-    """Core controller runner that handles the execution lifecycle of asset report queries."""
-    chat_id = update.effective_chat.id
-    user_id = update.effective_user.id
-    
-    logger.info(f"👤 User {user_id} triggered macro query execution for vector: {display_name} [{symbol}]")
-    
-    # Send non-blocking typing indicator to user interface
-    await update.message.reply_chat_action(action="typing")
-    
-    try:
-        # Route query straight to our hybrid ingestion and math engine assembly
-        report_output = await market_service.get_asset_report(symbol, display_name)
-        
-        # Dispatch final synchronized statistical layout back to the Telegram channel
-        await update.message.reply_text(
-            text=report_output,
-            parse_mode="Markdown"
-        )
-        logger.info(f"✅ Telemetry compilation successfully transmitted for {display_name} to Chat ID: {chat_id}")
-        
-    except Exception as err:
-        logger.error(f"❌ Controller layer failure executing report compilation for {symbol}: {err}", exc_info=True)
-        await update.message.reply_text(
-            text=f"❌ **System Execution Fault:** Infrastructure failed to process token matrix tracking for `{display_name}`."
-        )
+# 🧠 INTERACTIVE NICKNAME ALIAS DICTIONARY
+ASSET_ALIASES: Dict[str, str] = {
+    "BITCOIN": "BTCUSD",
+    "BTC": "BTCUSD",
+    "ETHEREUM": "ETHUSD",
+    "ETH": "ETHUSD",
+    "BNB": "BNBUSD",
+    "NASDAQ": "NQ=F",
+    "NAS100": "NQ=F",
+    "NAS": "NQ=F",
+    "NIKKEI": "NKD=F",
+    "JP225": "NKD=F",
+    "DOW": "YM=F",
+    "DOWJONES": "YM=F",
+    "US30": "YM=F"
+}
 
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 💱 FOREX ASSET ROUTING HANDLERS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-async def eurusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for EUR/USD."""
-    await process_and_send_report(update, "EURUSD", "EURUSD")
-
-async def gbpusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for GBP/USD."""
-    await process_and_send_report(update, "GBPUSD", "GBPUSD")
-
-async def gbpjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for British Pound vs JPY."""
-    await process_and_send_report(update, "GBPJPY", "GBPJPY")
-
-async def usdcad_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for US Dollar vs Canadian Dollar."""
-    await process_and_send_report(update, "USDCAD", "USDCAD")
-
-async def usdchf_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for US Dollar vs Swiss Franc."""
-    await process_and_send_report(update, "USDCHF", "USDCHF")
-
-async def audusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Australian Dollar vs US Dollar."""
-    await process_and_send_report(update, "AUDUSD", "AUDUSD")
-
-async def eurjpy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Euro vs Japanese Yen."""
-    await process_and_send_report(update, "EURJPY", "EURJPY")
-
-async def eurgbp_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Euro vs British Pound."""
-    await process_and_send_report(update, "EURGBP", "EURGBP")
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 📈 STOCK INDEX FUTURES ROUTING HANDLERS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-async def us30_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Dow Jones Mini Futures."""
-    await process_and_send_report(update, "YM=F", "US30 (Dow Jones)")
-
-async def nas100_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Nasdaq 100 E-mini Futures."""
-    await process_and_send_report(update, "NQ=F", "NAS100 (Nasdaq)")
-
-async def jp225_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Nikkei 225 Futures Mirror."""
-    await process_and_send_report(update, "NKD=F", "JP225 (Nikkei)")
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# 🪙 CRYPTOCURRENCY SPOT ROUTING HANDLERS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-async def btcusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Bitcoin Spot."""
-    await process_and_send_report(update, "BTCUSD", "BTCUSD")
-
-async def ethusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Ethereum Spot."""
-    await process_and_send_report(update, "ETHUSD", "ETHUSD")
-
-async def bnbusd_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Processes real-time deviations and Monte Carlo drift vectors for Binance Coin Spot."""
-    await process_and_send_report(update, "BNBUSD", "BNBUSD")
-
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-# ⚙️ GLOBAL UTILITY COMMAND HANDLERS
-# ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+def normalize_user_input(raw_text: str) -> str:
+    """Cleans up raw text inputs, strips punctuation, normalizes symbols,
+    and cross-references aliases to return a verified system token string.
+    """
+    if not raw_text:
+        return ""
+    clean_text = raw_text.replace("/", "").strip().upper()
+    clean_text = clean_text.split()[0] if clean_text else ""
+    if clean_text in ASSET_ALIASES:
+        return ASSET_ALIASES[clean_text]
+    return clean_text
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Generates the main onboarding structural command directory for the interface."""
@@ -112,19 +58,87 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🏛️ **MACRO BIAS PRO ENGINE ONLINE**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Welcome to your institutional systematic data engine. "
-        "Query the commands below to pull live deviations alongside 2,000-path "
+        "Query the assets below to pull live deviations alongside 2,000-path "
         "vectorized Geometric Brownian Motion session estimates.\n\n"
-        "💱 **Forex Command Matrix**\n"
-        " └ /eurusd, /gbpusd, /gbpjpy\n"
-        " └ /usdcad, /usdchf, /audusd\n"
-        " └ /eurjpy, /eurgbp\n\n"
-        "📈 **Indices Command Matrix**\n"
-        " └ /us30 - Dow Jones Mini Futures\n"
-        " └ /nas100 - Nasdaq 100 E-mini\n"
-        " └ /jp225 - Nikkei 225 Mirror\n\n"
-        "🪙 **Crypto Command Matrix**\n"
-        " └ /btcusd, /ethusd, /bnbusd\n"
+        "💱 **Forex Assets**\n"
+        " └ eurusd, gbpusd, gbpjpy\n"
+        " └ usdcad, usdchf, audusd\n"
+        " └ eurjpy, eurgbp\n\n"
+        "📈 **Indices Assets**\n"
+        " └ us30 - Dow Jones Mini Futures\n"
+        " └ nas100 - Nasdaq 100 E-mini\n"
+        " └ jp225 - Nikkei 225 Mirror\n\n"
+        "🪙 **Crypto Assets**\n"
+        " └ btcusd, ethusd, bnbusd\n"
         "━━━━━━━━━━━━━━━━━━\n"
-        "💡 *Systems status: Operating with active Supabase local database caching layer.*"
+        "💡 _Tip: You can use slashes or type in plain text! Simply sending 'btc' or 'eurusd' works perfectly._"
     )
     await update.message.reply_text(text=welcome_msg, parse_mode="Markdown")
+
+async def handle_market_query(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Unified dynamic controller that processes commands and plain text inputs,
+    running validation checks before passing queries to the math engine.
+    """
+    if not update.message or not update.message.text:
+        return
+
+    raw_message = update.message.text
+    
+    # Bypass asset analytics processing if user invokes the onboarding root handler
+    if raw_message.strip().startswith("/start"):
+        await start_handler(update, context)
+        return
+
+    user = update.effective_user
+    chat_id = update.effective_chat.id
+
+    logger.info(f"👤 User {user.id if user else 'Unknown'} dispatched text vector: '{raw_message}'")
+
+    try:
+        target_symbol = normalize_user_input(raw_message)
+        
+        # 🛡️ VALIDATION BOUNDARY GUARD
+        if target_symbol not in SUPPORTED_ASSETS:
+            logger.warning(f"⚠️ Validation Fault: Normalized token '{target_symbol}' matches no registered track rows.")
+            help_msg = (
+                "🔍 **Unsupported Ticker Vector**\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "The engine could not resolve your input. Please request a supported asset from our registry:\n\n"
+                "💱 **Forex Pairs:**\n"
+                "• `eurusd` | `gbpusd` | `gbpjpy`\n"
+                "• `usdcad` | `usdchf` | `audusd`\n\n"
+                "📊 **Macro Indexes & Futures:**\n"
+                "• `nas100` (Nasdaq) | `jp225` (Nikkei) | `us30` (Dow Jones)\n\n"
+                "🪙 **Digital Assets:**\n"
+                "• `btc` (Bitcoin) | `eth` (Ethereum) | `bnb` (BNB Coin)\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "💡 _Tip: Slashes are completely optional!_"
+            )
+            await update.message.reply_text(text=help_msg, parse_mode="Markdown")
+            return
+
+        display_name = SUPPORTED_ASSETS[target_symbol]
+        
+        # Send interactive typing feedback to user interface
+        await update.message.reply_chat_action(action="typing")
+        
+        status_node = await update.message.reply_text(
+            text=f"📥 **Ingesting Time-Series Grid for {display_name}...**", 
+            parse_mode="Markdown"
+        )
+        
+        market_service = MarketDataService()
+        report_markup = await market_service.get_asset_report(target_symbol, display_name)
+        
+        await context.bot.edit_message_text(
+            chat_id=chat_id,
+            message_id=status_node.message_id,
+            text=report_markup,
+            parse_mode="Markdown"
+        )
+        logger.info(f"✅ Telemetry compilation successfully transmitted for {target_symbol} to Chat ID: {chat_id}")
+
+    except Exception as fatal_err:
+        logger.critical(f"Unhandled exception caught inside message routing pipeline: {fatal_err}", exc_info=True)
+        fallback_error = "❌ **Infrastructure Timeout:** The processing node encountered an error. Please try again in a moment."
+        await update.message.reply_text(text=fallback_error, parse_mode="Markdown")
