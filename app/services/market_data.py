@@ -89,39 +89,47 @@ class MarketDataService:
     async def sync_asset_historical_cache(self, symbol: str, force_refresh: bool = False) -> list | None:
         """Saves daily closes into unique, cumulative historical rows without wiping anything."""
         clean_symbol = symbol.replace("/", "").strip().upper()
+        existing = await self.fetch_cached_history(clean_symbol)
         
-        if not force_refresh:
-            existing = await self.fetch_cached_history(clean_symbol)
-            if existing and len(existing) >= 20:
-                # 🛡️ SMART CACHE LOCK BREAKER: Explicitly evaluate date validity
-                local_today = datetime.now().strftime("%Y-%m-%d")
-                local_yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-                latest_db_date = existing[0]["datetime"]
-                
-                # Use cached metrics only if data matches our active market window
-                if latest_db_date in [local_today, local_yesterday]:
-                    return existing
+        # Calculate localized system dates
+        local_today = datetime.now().strftime("%Y-%m-%d")
+        local_yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        
+        # 🛡️ SYSTEM DATA SHIELD: Skip upstream vendors if local database storage layer is perfectly fresh
+        if not force_refresh and existing and len(existing) >= 20:
+            if existing[0]["datetime"] in [local_today, local_yesterday]:
+                return existing
 
-        logger.info(f"📡 Database stale or force-refreshed: Fetching fresh 30-day data for {clean_symbol}")
+        logger.info(f"📡 Processing asset transaction adjustments for: {clean_symbol}")
         is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
         bars = []
         
+        # 🛠️ DELTA OPTIMIZATION: If data exists but needs an update, fetch only the single latest day
+        fetch_period = "45d" if (not existing or len(existing) < 5 or force_refresh) else "3d"
+        twelve_output_size = "30" if (not existing or len(existing) < 5 or force_refresh) else "3"
+
         if clean_symbol.startswith("^") or "=" in clean_symbol or is_crypto:
             yf_ticker = "BTC-USD" if clean_symbol == "BTCUSD" else "ETH-USD" if clean_symbol == "ETHUSD" else "BNB-USD" if clean_symbol == "BNBUSD" else clean_symbol
             ticker = yf.Ticker(yf_ticker)
-            hist = ticker.history(period="45d")
+            hist = ticker.history(period=fetch_period)
             if not hist.empty:
-                hist = hist.sort_index(ascending=False).head(30)
+                hist = hist.sort_index(ascending=False)
+                # For standard updates, safely slice only the single newest candle bar
+                if fetch_period == "3d":
+                    hist = hist.head(1)
                 for idx, row in hist.iterrows():
                     bars.append({"symbol": clean_symbol, "date": idx.strftime("%Y-%m-%d"), "close": float(row['Close'])})
         else:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 try:
                     twelve_symbol = f"{clean_symbol[:3]}/{clean_symbol[3:]}"
-                    params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": "30", "apikey": settings.market_api_key}
+                    params = {"symbol": twelve_symbol, "interval": "1day", "outputsize": twelve_output_size, "apikey": settings.market_api_key}
                     res = await client.get(f"{self.twelve_base}/time_series", params=params)
                     if res.status_code == 200 and "values" in res.json():
-                        for val in res.json()["values"]:
+                        values_payload = res.json()["values"]
+                        if fetch_period == "3d" and values_payload:
+                            values_payload = [values_payload[0]]
+                        for val in values_payload:
                             bars.append({"symbol": clean_symbol, "date": val["datetime"], "close": float(val["close"])})
                 except Exception as err:
                     logger.error(f"Twelve Data history call crash for {clean_symbol}: {err}")
@@ -155,7 +163,6 @@ class MarketDataService:
                 return f"⚠️ **Cache Warm-up:** Building your historical archive for `{display_name}`. Re-query in 5 seconds."
 
             # 🧠 HARDENED PREVIOUS CLOSE CALCULATOR
-            # Locate the absolute newest candle whose date timestamp is strictly less than today's live calendar date
             local_today = datetime.now().strftime("%Y-%m-%d")
             prior_close = None
             
@@ -164,7 +171,6 @@ class MarketDataService:
                     prior_close = float(bar["close"])
                     break
                     
-            # Safe historical fallback trap using standard Python syntax
             if prior_close is None:
                 prior_close = float(historical_bars[0]["close"])
 
