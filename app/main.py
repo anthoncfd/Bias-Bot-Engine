@@ -12,7 +12,7 @@ from app.services.market_data import MarketDataService
 
 # Create a single, persistent, global async HTTP client pool instance
 global_http_client = httpx.AsyncClient(
-    timeout=httpx.Timeout(10.0, connect=5.0),
+    timeout=httpx.Timeout(15.0, connect=5.0),
     limits=httpx.Limits(max_connections=50, max_keepalive_connections=10)
 )
 
@@ -33,7 +33,6 @@ async def warm_historical_cache_layer():
                 "YM=F", "^N225", "NQ=F", "BTCUSD", "ETHUSD", "BNBUSD"
             ]
             
-        # Pass the global client pool directly into the service lifecycle
         service = MarketDataService(http_client=global_http_client)
         
         for index, symbol in enumerate(sync_symbols, start=1):
@@ -41,7 +40,8 @@ async def warm_historical_cache_layer():
             await service.sync_asset_historical_cache(symbol, force_refresh=False)
             
             is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
-            sleep_duration = 12 if (is_forex and not is_github_ci) else 3
+            # Hardened startup pacing to protect API endpoints
+            sleep_duration = 15 if (is_forex and not is_github_ci) else 5
             await asyncio.sleep(sleep_duration)
             
         logger.info("✅ Core initialization checks complete. Production cache engine is stable.")
@@ -78,7 +78,6 @@ async def lifespan(app: FastAPI):
     await telegram_app.stop()
     await telegram_app.shutdown()
     
-    # Gracefully disconnect and clean up connection pool sockets on shutdown
     await global_http_client.aclose()
     logger.info("Ecosystem internal bot engines cleanly shut down.")
 
@@ -96,8 +95,6 @@ async def force_utc_day_rollover_synchronizer(secret_token: str | None = None):
         raise HTTPException(status_code=401, detail="Invalid execution secret token context.")
         
     logger.info("📅 00:05 UTC Day Rollover Triggered: Appending closed daily candle transactions...")
-    
-    # Use the same shared persistent global pool instance to avoid credit-burning leaks
     service = MarketDataService(http_client=global_http_client)
     
     sync_symbols = [
@@ -111,10 +108,13 @@ async def force_utc_day_rollover_synchronizer(secret_token: str | None = None):
             logger.info(f"🔄 Rollover Sync [{index}/{len(sync_symbols)}]: Appending fresh close row for {symbol}")
             await service.sync_asset_historical_cache(symbol, force_refresh=True)
             
-            is_forex = not any(char in symbol for char in ["=", "^", "BTC", "ETH", "BNB"])
-            await asyncio.sleep(12 if is_forex else 2)
+            # 🛡️ RATE LIMIT SHIELD: Standardize a strict 15-second delay between assets
+            # This completely prevents "429 Too Many Requests" errors across all plans
+            await asyncio.sleep(15)
+            
         except Exception as e:
             logger.error(f"Failed to append daily rollover close for target {symbol}: {e}")
+            await asyncio.sleep(5)
             
     logger.info("✅ Database historical rows are successfully synchronized for the new trading session.")
     return {"status": "synchronized", "timestamp": datetime.now(timezone.utc).isoformat()}
