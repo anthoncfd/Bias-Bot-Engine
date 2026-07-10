@@ -233,9 +233,8 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            # 🧠 RUN MATRICES NATIVELY PASSING THE LIVE INTRA-DAY PRICE INTERPOLATION
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
-            tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price)
+            tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price, asset_class)
             
             return AssetReportPresenter.render(
                 display_name=display_name,
@@ -254,9 +253,7 @@ class MarketDataService:
             return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
 
 class AssetReportPresenter:
-    """Dedicated presentation formatting layer decoupling business engine calculation logic
-    from front-end string construction interfaces.
-    """
+    """Dedicated presentation formatting layer parsing strongly typed calculation maps natively."""
     
     @staticmethod
     def render(display_name: str, clean_symbol: str, asset_class: str, live_price: float, 
@@ -266,17 +263,7 @@ class AssetReportPresenter:
         prob_up = mc_data['prob_up']
         prob_down = mc_data['prob_down']
         
-        if prob_up > prob_down and net_change > 0:
-            direction_icon, trend_arrow, distribution_edge = "🟢 BULLISH BIAS", "📈", f"🟢 Long Advantage ({prob_up:.1f}%)"
-        elif prob_down > prob_up and net_change < 0:
-            direction_icon, trend_arrow, distribution_edge = "🔴 BEARISH BIAS", "📉", f"🔴 Short Advantage ({prob_down:.1f}%)"
-        elif prob_up > prob_down and net_change <= 0:
-            direction_icon, trend_arrow, distribution_edge = "🟡 CONDITIONAL BULLISH DRIFT", "⚡", f"🟡 Long Skew / Counter-Trend ({prob_up:.1f}%)"
-        elif prob_down > prob_up and net_change >= 0:
-            direction_icon, trend_arrow, distribution_edge = "🟡 CONDITIONAL BEARISH DRIFT", "⚡", f"🔴 Short Skew / Counter-Trend ({prob_down:.1f}%)"
-        else:
-            direction_icon, trend_arrow, distribution_edge = "⚪ NEUTRAL RANDOM WALK", "⚡", "⚪ Balanced Distribution"
-        
+        distribution_edge = f"🟢 Long Advantage ({prob_up:.1f}%)" if prob_up > prob_down else f"🔴 Short Advantage ({prob_down:.1f}%)" if prob_down > prob_up else "⚪ Balanced"
         is_high_value = asset_class == "CRYPTO" or "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol
         
         if is_high_value:
@@ -289,7 +276,7 @@ class AssetReportPresenter:
         kelly_str = f"`{mc_data['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc_data['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Active Distribution Edge)"
 
         return (
-            f"{trend_arrow} **{display_name} METRICS**\n"
+            f"{tech_data['bias_icon']} **{display_name} METRICS**\n"
             f"━━━━━━━━━━━━━━━━━━\n"
             f"• **Current Price:** `{val_fmt}`\n"
             f"• **Previous Close:** `{cls_fmt}`\n"
@@ -301,5 +288,5 @@ class AssetReportPresenter:
             f"• **Distribution Edge:** `{distribution_edge}`\n"
             f"• **Fractional Kelly Capital Allocation:** {kelly_str}\n"
             f"━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Engine Bias:** `{direction_icon}`"
+            f"📊 **Engine Bias:** `{tech_data['bias_display']}`"
         )
