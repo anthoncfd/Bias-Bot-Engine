@@ -1,6 +1,7 @@
 import re
 import json
 import httpx
+import os
 import xml.etree.ElementTree as ET
 from typing import List, Dict, Any
 from app.logger import logger
@@ -13,7 +14,11 @@ class NewsIntelligenceEngine:
     
     def __init__(self, http_client: httpx.AsyncClient):
         self.client = http_client
-        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.gemini_api_key}"
+        
+        # 🔐 RESILIENT ATTRIBUTE FALLBACK: Safely checks for custom api settings or looks up environment directly
+        api_key = getattr(settings, "gemini_api_key", None) or os.getenv("GEMINI_API_KEY") or getattr(settings, "supabase_key", "")
+        
+        self.gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
         self.browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
@@ -22,17 +27,13 @@ class NewsIntelligenceEngine:
         """Queries targeted institutional feeds dynamically based on the asset class category."""
         headlines = []
         
-        # 🎯 Dynamic Institutional Source Router Mapping Arrays
         if symbol in ["EURUSD", "GBPUSD", "GBPJPY", "USDCAD", "USDCHF", "AUDUSD", "EURJPY", "EURGBP"]:
-            # source: Investing.com (Forex & Currency News Specialization)
             url = "https://www.investing.com/rss/news_1.rss"
             source_tag = "Investing.com"
         elif symbol in ["YM=F", "NQ=F", "NKD=F", "^N225"]:
-            # source: Yahoo Finance (Indices and Equity Markets)
             url = f"https://finance.yahoo.com/rss/headline?s={symbol}"
             source_tag = "Yahoo Finance"
         else:
-            # source: Reuters (Default for Crypto and Heavy Macro Waves)
             url = "https://www.reutersagency.com/feed/?best-sectors=business-finance&format=xml"
             source_tag = "Reuters"
 
@@ -40,7 +41,7 @@ class NewsIntelligenceEngine:
             res = await self.client.get(url, headers=self.browser_headers, timeout=8.0)
             if res.status_code == 200:
                 root = ET.fromstring(res.text)
-                for item in root.findall(".//item")[:4]:  # Evaluate the top 4 active headlines to control context cost
+                for item in root.findall(".//item")[:4]:
                     title_node = item.find("title")
                     if title_node is not None and title_node.text:
                         headlines.append({
@@ -50,7 +51,6 @@ class NewsIntelligenceEngine:
         except Exception as err:
             logger.error(f"⚠️ Multi-source RSS ingestion warning for {symbol} via {source_tag}: {err}")
             
-        # Resilient backup matrix if remote servers return empty data blocks
         if not headlines:
             headlines = [{
                 "text": f"Systematic distribution ranges tighten as institutions monitor risk cycles for {symbol}.",
@@ -93,4 +93,3 @@ class NewsIntelligenceEngine:
             count += 1
             
         return float(total_score / count) if count > 0 else 0.0
-
