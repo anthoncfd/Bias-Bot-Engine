@@ -1,5 +1,5 @@
 import numpy as np
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any
 from app.logger import logger
 
 class QuantitativeMathEngine:
@@ -9,42 +9,49 @@ class QuantitativeMathEngine:
     """
 
     @staticmethod
-    def _extract_closes(historical_bars: List[Dict[str, Any]]) -> np.ndarray:
-        """Helper method to parse and reverse historical bars into a chronological NumPy array."""
-        # Database returns date DESC; we invert to date ASC (chronological) for moving averages
-        closes = [float(bar["close"]) for bar in historical_bars]
-        return np.array(closes[::-1])
+    def _extract_vectorized_closes(historical_bars: List[Dict[str, Any]], live_price: float) -> np.ndarray:
+        """Loads historical matrices into a contiguous memory block via high-performance 
+
+        NumPy C-arrays, then dynamically appends the active live price token.
+        """
+        # Extract closing records from dictionary maps natively using high-speed iterators
+        iterator = (float(bar["close"]) for bar in historical_bars)
+        historical_vector = np.fromiter(iterator, dtype=float, count=len(historical_bars))
+        
+        # Database returns records sorted descending (newest first). Invert to chronological order.
+        chronological_vector = historical_vector[::-1]
+        
+        # 📈 LIVE APPRECIATION PATCH: Append the fluctuating intraday price token to the matrix array
+        return np.append(chronological_vector, live_price)
 
     @staticmethod
-    def calculate_technical_indicators(historical_bars: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Calculates institutional indicators from expanded daily historical lookback matrices."""
+    def calculate_technical_indicators(historical_bars: List[Dict[str, Any]], live_price: float) -> Dict[str, Any]:
+        """Calculates institutional indicators from expanded daily historical lookback matrices.
+        Safely scales analytical window bounds relative to historical data depth.
+        """
         try:
-            closes = QuantitativeMathEngine._extract_closes(historical_bars)
+            closes = QuantitativeMathEngine._extract_vectorized_closes(historical_bars, live_price)
             n_bars = len(closes)
 
-            # 🛡️ EXPANDED THRESHOLD GUARD
-            if n_bars < 50:
-                logger.warning(f"⚠️ Shallow matrix lookback detected ({n_bars} bars). Indicator processing using max available fallback capacity.")
-
             if n_bars < 2:
-                raise ValueError("Insufficient data bars to compute basic lookback statistics.")
+                raise ValueError("Insufficient time-series elements to calculate foundational lookbacks.")
 
-            # 1. Moving Averages (Safely constrained to maximum array capacity)
+            # 1. Moving Averages (Safely constrained to maximum array capacity limits)
             sma_20_len = min(20, n_bars)
             sma_50_len = min(50, n_bars)
             
             sma_20 = float(np.mean(closes[-sma_20_len:]))
             sma_50 = float(np.mean(closes[-sma_50_len:]))
 
-            # 2. Average True Range (ATR) Fallback Realization
+            # 2. Closing Volatility Range (CVR) Realization (Mathematical substitute for High-Low ATR)
             if n_bars > 1:
-                atr_window = min(14, n_bars - 1)
+                cvr_window = min(14, n_bars - 1)
                 close_diffs = np.abs(np.diff(closes))
-                atr = float(np.mean(close_diffs[-atr_window:]))
+                cvr = float(np.mean(close_diffs[-cvr_window:]))
             else:
-                atr = 0.0
+                cvr = 0.0
 
-            # 3. Momentum (Absolute rate of change relative to standard 10-period lookback)
+            # 3. Momentum (Absolute rate of price change relative to 10-period lookback boundaries)
             mom_window = min(10, n_bars - 1)
             momentum = float(closes[-1] - closes[-1 - mom_window])
 
@@ -53,12 +60,12 @@ class QuantitativeMathEngine:
             if slope_window > 1:
                 y = closes[-slope_window:]
                 x = np.arange(slope_window)
-                # OLS Slope formula: Cov(X,Y) / Var(X)
+                # OLS Gradient Formula: Cov(X,Y) / Var(X)
                 slope = float(np.cov(x, y)[0, 1] / np.var(x, ddof=1))
             else:
                 slope = 0.0
 
-            # 5. Z-Score (Distance of current close from the 20-period moving average in Standard Deviations)
+            # 5. Z-Score (Distance of current live price from the 20-period mean in Standard Deviations)
             z_window = min(20, n_bars)
             if z_window > 1:
                 window_mean = np.mean(closes[-z_window:])
@@ -68,7 +75,7 @@ class QuantitativeMathEngine:
                 z_score = 0.0
 
             # 6. Quantitative Technical Score Normalization Layer Matrix
-            # Allocation weights: Trend Alignment & Slope (40%), Momentum & Z-Score State (60%)
+            # Allocation weights: Trend Direction (40%), Oscillator/Velocity State (60%)
             tech_score = 0.0
             
             if sma_20 > sma_50: tech_score += 0.20
@@ -87,7 +94,7 @@ class QuantitativeMathEngine:
             return {
                 "sma_20": sma_20,
                 "sma_50": sma_50,
-                "atr": atr,
+                "cvr": cvr,
                 "momentum": momentum,
                 "slope": slope,
                 "z_score": z_score,
@@ -97,7 +104,7 @@ class QuantitativeMathEngine:
         except Exception as err:
             logger.error(f"Quantitative calculation exception inside Math Engine: {err}")
             return {
-                "sma_20": 0.0, "sma_50": 0.0, "atr": 0.0, "momentum": 0.0,
+                "sma_20": 0.0, "sma_50": 0.0, "cvr": 0.0, "momentum": 0.0,
                 "slope": 0.0, "z_score": 0.0, "technical_score_pct": 0.0
             }
 
@@ -106,7 +113,10 @@ class QuantitativeMathEngine:
                               paths: int = 2000, horizons: int = 1) -> Dict[str, Any]:
         """Calculates classic Geometric Brownian Motion drift paths using continuous logged variances."""
         try:
-            closes = QuantitativeMathEngine._extract_closes(historical_bars)
+            # We evaluate Monte Carlo strictly on clean historical close allocations
+            iterator = (float(bar["close"]) for bar in historical_bars)
+            closes = np.fromiter(iterator, dtype=float, count=len(historical_bars))[::-1]
+            
             if len(closes) < 3:
                 return {"prob_up": 50.0, "prob_down": 50.0, "expected_value": current_price, "sigma_pct": 0.5, "kelly_suggested_allocation_pct": 0.0}
 
