@@ -234,7 +234,7 @@ class MarketDataService:
             change_pct = (net_change / prior_close) * 100
             
             mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
-            tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price, asset_class)
+            tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price, prior_close, asset_class)
             
             return AssetReportPresenter.render(
                 display_name=display_name,
