@@ -11,23 +11,17 @@ class QuantitativeMathEngine:
     @staticmethod
     def _extract_vectorized_closes(historical_bars: List[Dict[str, Any]], live_price: float) -> np.ndarray:
         """Loads historical matrices into a contiguous memory block via high-performance 
-
         NumPy C-arrays, then dynamically appends the active live price token.
         """
-        # Extract closing records from dictionary maps natively using high-speed iterators
         iterator = (float(bar["close"]) for bar in historical_bars)
         historical_vector = np.fromiter(iterator, dtype=float, count=len(historical_bars))
-        
-        # Database returns records sorted descending (newest first). Invert to chronological order.
         chronological_vector = historical_vector[::-1]
-        
-        # 📈 LIVE APPRECIATION PATCH: Append the fluctuating intraday price token to the matrix array
         return np.append(chronological_vector, live_price)
 
     @staticmethod
-    def calculate_technical_indicators(historical_bars: List[Dict[str, Any]], live_price: float) -> Dict[str, Any]:
-        """Calculates institutional indicators from expanded daily historical lookback matrices.
-        Safely scales analytical window bounds relative to historical data depth.
+    def calculate_technical_indicators(historical_bars: List[Dict[str, Any]], live_price: float, asset_class: str) -> Dict[str, Any]:
+        """Calculates institutional indicators and executes multi-factor confluence signaling 
+        dynamically adjusted for asset-class volatility thresholds.
         """
         try:
             closes = QuantitativeMathEngine._extract_vectorized_closes(historical_bars, live_price)
@@ -36,14 +30,13 @@ class QuantitativeMathEngine:
             if n_bars < 2:
                 raise ValueError("Insufficient time-series elements to calculate foundational lookbacks.")
 
-            # 1. Moving Averages (Safely constrained to maximum array capacity limits)
+            # 1. Moving Averages
             sma_20_len = min(20, n_bars)
             sma_50_len = min(50, n_bars)
-            
             sma_20 = float(np.mean(closes[-sma_20_len:]))
             sma_50 = float(np.mean(closes[-sma_50_len:]))
 
-            # 2. Closing Volatility Range (CVR) Realization (Mathematical substitute for High-Low ATR)
+            # 2. Closing Volatility Range (CVR)
             if n_bars > 1:
                 cvr_window = min(14, n_bars - 1)
                 close_diffs = np.abs(np.diff(closes))
@@ -51,21 +44,20 @@ class QuantitativeMathEngine:
             else:
                 cvr = 0.0
 
-            # 3. Momentum (Absolute rate of price change relative to 10-period lookback boundaries)
+            # 3. Momentum
             mom_window = min(10, n_bars - 1)
             momentum = float(closes[-1] - closes[-1 - mom_window])
 
-            # 4. Trend Slope (Ordinary Least Squares Linear Regression over final 14 bars)
+            # 4. Trend Slope (OLS Linear Regression)
             slope_window = min(14, n_bars)
             if slope_window > 1:
                 y = closes[-slope_window:]
                 x = np.arange(slope_window)
-                # OLS Gradient Formula: Cov(X,Y) / Var(X)
                 slope = float(np.cov(x, y)[0, 1] / np.var(x, ddof=1))
             else:
                 slope = 0.0
 
-            # 5. Z-Score (Distance of current live price from the 20-period mean in Standard Deviations)
+            # 5. Z-Score
             z_window = min(20, n_bars)
             if z_window > 1:
                 window_mean = np.mean(closes[-z_window:])
@@ -74,22 +66,46 @@ class QuantitativeMathEngine:
             else:
                 z_score = 0.0
 
-            # 6. Quantitative Technical Score Normalization Layer Matrix
-            # Allocation weights: Trend Direction (40%), Oscillator/Velocity State (60%)
+            # 6. Technical Score Normalization
             tech_score = 0.0
-            
             if sma_20 > sma_50: tech_score += 0.20
             else: tech_score -= 0.20
-            
             if slope > 0: tech_score += 0.20
             else: tech_score -= 0.20
-            
             if momentum > 0: tech_score += 0.30
             else: tech_score -= 0.30
             
-            # Map Z-Score scale bounds symmetrically over standard +/- 2.0 Sigma boundaries
             z_bounded = max(-2.0, min(2.0, z_score))
             tech_score += (z_bounded / 2.0) * 0.30
+            tech_score_pct = float(tech_score * 100)
+
+            # ━━━━ 🏛️ STRATIFIED CONFLUENCE ENGINE ROUTER ━━━━
+            # Adjust sensitivity boundaries based on real-world asset class behavior
+            barrier = 15.0 if asset_class == "FOREX" else 35.0
+            net_change = live_price - float(historical_bars[0]["close"])
+
+            if tech_score_pct > barrier:
+                if net_change >= 0:
+                    bias_state = "STRONGLY_BULLISH"
+                    display_text = "🟢 STRONGLY BULLISH BIAS"
+                    icon = "📈"
+                else:
+                    bias_state = "BULLISH_RETRACEMENT"
+                    display_text = "🟡 BULLISH RETRACEMENT (DIP BUYING ZONE)"
+                    icon = "⚡"
+            elif tech_score_pct < -barrier:
+                if net_change <= 0:
+                    bias_state = "STRONGLY_BEARISH"
+                    display_text = "🔴 STRONGLY BEARISH BIAS"
+                    icon = "📉"
+                else:
+                    bias_state = "BEARISH_RECOVERY"
+                    display_text = "🟡 BEARISH RECOVERY (RALLY SELLING ZONE)"
+                    icon = "⚡"
+            else:
+                bias_state = "NEUTRAL"
+                display_text = "⚪ NEUTRAL MEAN REVERSION BLOCK"
+                icon = "⚖️"
 
             return {
                 "sma_20": sma_20,
@@ -98,14 +114,17 @@ class QuantitativeMathEngine:
                 "momentum": momentum,
                 "slope": slope,
                 "z_score": z_score,
-                "technical_score_pct": float(tech_score * 100)
+                "technical_score_pct": tech_score_pct,
+                "bias_state": bias_state,
+                "bias_display": display_text,
+                "bias_icon": icon
             }
 
         except Exception as err:
             logger.error(f"Quantitative calculation exception inside Math Engine: {err}")
             return {
-                "sma_20": 0.0, "sma_50": 0.0, "cvr": 0.0, "momentum": 0.0,
-                "slope": 0.0, "z_score": 0.0, "technical_score_pct": 0.0
+                "sma_20": 0.0, "sma_50": 0.0, "cvr": 0.0, "momentum": 0.0, "slope": 0.0, "z_score": 0.0,
+                "technical_score_pct": 0.0, "bias_state": "NEUTRAL", "bias_display": "⚪ SYSTEM ERROR", "bias_icon": "⚠️"
             }
 
     @staticmethod
@@ -113,7 +132,6 @@ class QuantitativeMathEngine:
                               paths: int = 2000, horizons: int = 1) -> Dict[str, Any]:
         """Calculates classic Geometric Brownian Motion drift paths using continuous logged variances."""
         try:
-            # We evaluate Monte Carlo strictly on clean historical close allocations
             iterator = (float(bar["close"]) for bar in historical_bars)
             closes = np.fromiter(iterator, dtype=float, count=len(historical_bars))[::-1]
             
@@ -124,8 +142,7 @@ class QuantitativeMathEngine:
             mu = np.mean(log_returns)
             sigma = np.std(log_returns, ddof=1)
             
-            if sigma == 0:
-                sigma = 0.0001
+            if sigma == 0: sigma = 0.0001
 
             drift = mu - 0.5 * (sigma ** 2)
             shock = sigma * np.random.normal(0, 1, (paths, horizons))
