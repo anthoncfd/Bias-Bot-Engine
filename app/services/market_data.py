@@ -1,7 +1,7 @@
 import httpx
 import asyncio
 import yfinance as yf
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from app.config import settings
 from app.logger import logger
 from app.services.quant_math import QuantitativeMathEngine
@@ -93,9 +93,16 @@ class MarketDataService:
         if not force_refresh:
             existing = await self.fetch_cached_history(clean_symbol)
             if existing and len(existing) >= 20:
-                return existing
+                # 🛡️ SMART CACHE LOCK BREAKER: Explicitly evaluate date validity
+                local_today = datetime.now().strftime("%Y-%m-%d")
+                local_yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+                latest_db_date = existing[0]["datetime"]
+                
+                # Use cached metrics only if data matches our active market window
+                if latest_db_date in [local_today, local_yesterday]:
+                    return existing
 
-        logger.info(f"📡 Downloading candle close transaction layer for asset vector: {clean_symbol}")
+        logger.info(f"📡 Database stale or force-refreshed: Fetching fresh 30-day data for {clean_symbol}")
         is_crypto = clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]
         bars = []
         
@@ -157,7 +164,7 @@ class MarketDataService:
                     prior_close = float(bar["close"])
                     break
                     
-            # Safe historical fallback trap using correct Python syntax
+            # Safe historical fallback trap using standard Python syntax
             if prior_close is None:
                 prior_close = float(historical_bars[0]["close"])
 
