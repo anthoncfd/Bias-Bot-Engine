@@ -6,6 +6,9 @@ from typing import List, Dict, Any, Optional
 from app.config import settings
 from app.logger import logger
 from app.services.quant_math import QuantitativeMathEngine
+from app.services.macro_sentiment import MacroSentimentEngine
+from app.services.news_intelligence import NewsIntelligenceEngine
+from app.services.composite_engine import MarketIntelligenceEngine
 
 class MarketDataService:
     """Enterprise-grade hybrid financial brokerage interface layer.
@@ -28,7 +31,7 @@ class MarketDataService:
         self.browser_headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        self.client = http_client if http_client is not None else httpx.AsyncClient(timeout=10.0)
+        self.client = http_client if http_client is not None else httpx.AsyncClient(timeout=15.0)
 
     def _normalize_symbol(self, symbol: str) -> str:
         """Standardizes input vectors into raw capitalized strings."""
@@ -38,7 +41,7 @@ class MarketDataService:
         """Abstracted Registry Router mapping asset character configurations cleanly."""
         if clean_symbol in ["BTCUSD", "ETHUSD", "BNBUSD"]:
             return "CRYPTO"
-        if clean_symbol.startswith("^") or "=" in clean_symbol:
+        if clean_symbol.startswith("^") or "=" in clean_symbol or clean_symbol in ["YM=F", "NQ=F", "NKD=F"]:
             return "INDEX_FUTURE"
         return "FOREX"
 
@@ -233,60 +236,54 @@ class MarketDataService:
             net_change = live_price - prior_close
             change_pct = (net_change / prior_close) * 100
             
-            mc = QuantitativeMathEngine.calculate_monte_carlo(live_price, historical_bars)
+            # ━━━━ 🏛️ RUN MULTI-FACTOR ENGINES ━━━━
+            macro_engine = MacroSentimentEngine(http_client=self.client)
+            news_engine = NewsIntelligenceEngine(http_client=self.client)
+            composite_engine = MarketIntelligenceEngine(http_client=self.client)
+            
+            raw_macro = await macro_engine.fetch_macro_raw_metrics()
+            macro_data = macro_engine.calculate_normalized_scores(raw_macro)
+            news_score = await news_engine.generate_news_confluence_score(clean_symbol)
+            
             tech = QuantitativeMathEngine.calculate_technical_indicators(historical_bars, live_price, prior_close, asset_class)
             
-            return AssetReportPresenter.render(
-                display_name=display_name,
-                clean_symbol=clean_symbol,
-                asset_class=asset_class,
-                live_price=live_price,
-                prior_close=prior_close,
-                net_change=net_change,
-                change_pct=change_pct,
-                mc_data=mc,
-                tech_data=tech
+            matrix = composite_engine.calculate_composite_matrix(
+                tech=tech['technical_score_pct'],
+                macro=macro_data['macro_score_pct'],
+                sent=macro_data['sentiment_score_pct'],
+                news=news_score
+            )
+            
+            ai_briefing = await composite_engine.generate_institutional_briefing(clean_symbol, matrix, tech['technical_score_pct'])
+            
+            bias_emoji = "🚀" if "BULLISH" in matrix['market_bias'] else "💥" if "BEARISH" in matrix['market_bias'] else "⚖️"
+            is_high_value = asset_class == "CRYPTO" or "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol or clean_symbol in ["YM=F", "NQ=F", "NKD=F"]
+            
+            if is_high_value:
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
+            else:
+                val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
+
+            return (
+                f"{tech['bias_icon']} **{display_name} COMPOSITE INTEL**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"• **Current Price:** `{val_fmt}`\n"
+                f"• **Net Deviation:** `{chg_fmt}` (`{change_pct:+.2f}%`)\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📊 **Sub-Score Matrices:**\n"
+                f" ├ Technical: `{tech['technical_score_pct']:+.1f}%`\n"
+                f" ├ Macro Setup: `{macro_data['macro_score_pct']:+.1f}%`\n"
+                f" ├ Risk Sentiment: `{macro_data['sentiment_score_pct']:+.1f}%`\n"
+                f" └ News Intelligence: `{news_score:+.1f}%`\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"🎲 **Composite Matrix Probabilities:**\n"
+                f"• Bullish Path: `{matrix['prob_up']:.1f}%` | Bearish Path: `{matrix['prob_down']:.1f}%`\n"
+                f"• Engine Conviction: `{matrix['confidence_level']:.1f}%` Scale\n"
+                f"📊 **Final Engine Bias:** `{bias_emoji} {matrix['market_bias'].replace('_', ' ')}`\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"📝 **Executive Macro Briefing:**\n_{ai_briefing}_\n"
             )
             
         except Exception as err:
             logger.critical(f"Schema compilation exception parsing metrics block for {clean_symbol}: {err}", exc_info=True)
             return f"❌ **Processing Error:** Infrastructure fault processing metrics for `{display_name}`."
-
-class AssetReportPresenter:
-    """Dedicated presentation formatting layer parsing strongly typed calculation maps natively."""
-    
-    @staticmethod
-    def render(display_name: str, clean_symbol: str, asset_class: str, live_price: float, 
-               prior_close: float, net_change: float, change_pct: float, mc_data: dict, 
-               tech_data: dict) -> str:
-        """Assembles variables into production-ready scannable Markdown data blocks."""
-        prob_up = mc_data['prob_up']
-        prob_down = mc_data['prob_down']
-        
-        distribution_edge = f"🟢 Long Advantage ({prob_up:.1f}%)" if prob_up > prob_down else f"🔴 Short Advantage ({prob_down:.1f}%)" if prob_down > prob_up else "⚪ Balanced"
-        is_high_value = asset_class == "CRYPTO" or "JPY" in clean_symbol or clean_symbol.startswith("^") or "=" in clean_symbol
-        
-        if is_high_value:
-            val_fmt, cls_fmt, chg_fmt = f"{live_price:,.2f}", f"{prior_close:,.2f}", f"{net_change:+,.2f}"
-            ev_fmt = f"{mc_data['expected_value']:,.2f}"
-        else:
-            val_fmt, cls_fmt, chg_fmt = f"{live_price:.5f}", f"{prior_close:.5f}", f"{net_change:+.5f}"
-            ev_fmt = f"{mc_data['expected_value']:.5f}"
-            
-        kelly_str = f"`{mc_data['kelly_suggested_allocation_pct']:.1f}%` Max Account Risk Limit" if mc_data['kelly_suggested_allocation_pct'] > 0 else "`0.0%` (No Active Distribution Edge)"
-
-        return (
-            f"{tech_data['bias_icon']} **{display_name} METRICS**\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"• **Current Price:** `{val_fmt}`\n"
-            f"• **Previous Close:** `{cls_fmt}`\n"
-            f"• **Net Deviation:** `{chg_fmt}` (`{change_pct:+.2f}%`)\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Technical Score Matrix:** `{tech_data['technical_score_pct']:+.1f}%` Condition\n"
-            f"🎲 **Monte Carlo Expected Value:** `{ev_fmt}`\n"
-            f"• **Historical Period Volatility:** `{mc_data['sigma_pct']:.2f}%`\n"
-            f"• **Distribution Edge:** `{distribution_edge}`\n"
-            f"• **Fractional Kelly Capital Allocation:** {kelly_str}\n"
-            f"━━━━━━━━━━━━━━━━━━\n"
-            f"📊 **Engine Bias:** `{tech_data['bias_display']}`"
-        )
